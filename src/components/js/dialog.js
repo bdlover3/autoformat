@@ -1,57 +1,109 @@
-import Util from './util.js'
+function loadSettings(settings) {
+  try {
+    if (typeof window.Application !== 'undefined' && window.Application.PluginStorage) {
+      let saved = window.Application.PluginStorage.getItem('formatSettings')
+      if (saved) {
+        let parsed = JSON.parse(saved)
+        Object.keys(parsed).forEach(key => {
+          if (key in settings) {
+            settings[key] = parsed[key]
+          }
+        })
+        return
+      }
+    }
+  } catch (e) {
+    console.log('读取设置失败', e)
+  }
+  //尝试从window上读取（ribbon.js导出的）
+  try {
+    if (typeof window.getFormatSettings === 'function') {
+      let saved = window.getFormatSettings()
+      Object.keys(saved).forEach(key => {
+        if (key in settings) {
+          settings[key] = saved[key]
+        }
+      })
+    }
+  } catch (e) {
+    console.log('从window读取设置失败', e)
+  }
+}
 
-function onbuttonclick(idStr, param) {
-  switch (idStr) {
-    case 'getDocName': {
-      let doc = window.Application.ActiveDocument
-      if (!doc) {
-        return '当前没有打开任何文档'
+function saveSettings(settings) {
+  try {
+    let settingsStr = JSON.stringify(settings)
+    //方法1: WPS PluginStorage
+    try {
+      if (typeof window.Application !== 'undefined' && window.Application.PluginStorage) {
+        window.Application.PluginStorage.setItem('formatSettings', settingsStr)
       }
-      return doc.Name
+    } catch (e) {
+      console.log('保存到PluginStorage失败', e)
     }
-    case 'createTaskPane': {
-      let tsId = window.Application.PluginStorage.getItem('taskpane_id')
-      if (!tsId) {
-        let tskpane = window.Application.CreateTaskPane(Util.GetUrlPath() + '/taskpane')
-        let id = tskpane.ID
-        window.Application.PluginStorage.setItem('taskpane_id', id)
-        tskpane.Visible = true
-      } else {
-        let tskpane = window.Application.GetTaskPane(tsId)
-        tskpane.Visible = true
+    //方法2: 调用ribbon.js导出的保存函数
+    try {
+      if (typeof window.saveFormatSettings === 'function') {
+        window.saveFormatSettings(settings)
       }
-      break
+    } catch (e) {
+      console.log('调用saveFormatSettings失败', e)
     }
-    case 'newDoc': {
-      window.Application.Documents.Add()
-      break
+    //方法3: localStorage作为备选
+    try {
+      localStorage.setItem('formatSettings', settingsStr)
+    } catch (e) {
+      console.log('保存到localStorage失败', e)
     }
-    case 'addString': {
-      let doc = window.Application.ActiveDocument
-      if (doc) {
-        doc.Range(0, 0).Text = 'Hello, wps加载项!'
-        //好像是wps的bug, 这两句话触发wps重绘
-        let rgSel = window.Application.Selection.Range
-        if (rgSel) rgSel.Select()
-      }
-      break
-    }
-    case 'closeDoc': {
-      if (window.Application.Documents.Count < 2) {
-        alert('当前只有一个文档，别关了。')
-        break
-      }
+    alert('设置已保存！')
+  } catch (e) {
+    alert('保存设置失败：' + e.message)
+  }
+}
 
-      let doc = window.Application.ActiveDocument
-      if (doc) doc.Close()
-      break
+function resetSettings(settings) {
+  try {
+    let defaults
+    if (typeof window.getDefaultSettings === 'function') {
+      defaults = window.getDefaultSettings()
+    } else {
+      defaults = {
+        titleFontSize: 22,
+        bodyFontSize: 16,
+        h1FontSize: 16,
+        h2FontSize: 16,
+        h3FontSize: 16,
+        h4FontSize: 16,
+        titleFont: '方正小标宋简体',
+        bodyFont: '仿宋_GB2312',
+        h1Font: '黑体',
+        h2Font: '楷体_GB2312',
+        h3Font: '仿宋_GB2312',
+        h4Font: '仿宋_GB2312',
+        lineSpacing: 28.9,
+        marginTop: 37,
+        marginBottom: 35,
+        marginLeft: 28,
+        marginRight: 26,
+        enablePageNumber: true,
+        pageNumberPosition: 'center',
+        clearFormatting: true
+      }
     }
-    case 'openWeb': {
-      break
-    }
+    Object.keys(defaults).forEach(key => {
+      if (key in settings) {
+        settings[key] = defaults[key]
+      }
+    })
+    //同时保存到本地
+    saveSettings(settings)
+  } catch (e) {
+    alert('恢复默认设置失败：' + e.message)
   }
 }
 
 export default {
-  onbuttonclick
+  loadSettings,
+  saveSettings,
+  resetSettings
 }

@@ -1,74 +1,78 @@
 <template>
-  <div class="global">
-    <div class="divItem">
-      这是一个网页，按<span style="font-weight: bolder">"F12"</span>可以打开调试器。
+  <div class="taskpane-panel">
+    <h3 class="panel-title">公文排版助手</h3>
+    <div class="info-section">
+      <p>点击Ribbon栏中的<b>"一键排版"</b>按钮，即可将当前文档自动调整为规范的公文格式。</p>
     </div>
-    <div class="divItem">
-      这个示例展示了wps加载项的相关基础能力，与B/S业务系统的交互，请用浏览器打开：
-      <span style="font-weight: bolder; color: slateblue; cursor: pointer" @click="onOpenWeb()">{{
-        DemoSpan
-      }}</span>
+    <div class="info-section">
+      <h4>排版规范说明</h4>
+      <ul>
+        <li>纸张：A4纸，上37mm/下35mm/左28mm/右26mm</li>
+        <li>公文标题：二号方正小标宋简体，居中</li>
+        <li>正文：三号仿宋_GB2312，行距固定值28.9磅</li>
+        <li>一级标题：三号黑体（如"一、"）</li>
+        <li>二级标题：三号楷体_GB2312（如"（一）"）</li>
+        <li>三级标题：三号仿宋_GB2312（如"1."）</li>
+        <li>四级标题：三号仿宋_GB2312（如"（1）"）</li>
+        <li>数字统一使用Times New Roman字体</li>
+        <li>"一是""二是""三是"等自动加粗</li>
+      </ul>
     </div>
-    <div class="divItem">
-      开发文档:
-      <span style="font-weight: bolder; color: slateblue">https://open.wps.cn/docs/office</span>
-    </div>
-    <hr />
-    <div class="divItem">
-      <button style="margin: 3px" @click="onbuttonclick('dockLeft')">停靠左边</button>
-      <button style="margin: 3px" @click="onbuttonclick('dockRight')">停靠右边</button>
-      <button style="margin: 3px" @click="onbuttonclick('hideTaskPane')">隐藏TaskPane</button>
-      <button style="margin: 3px" @click="onbuttonclick('addString')">文档开头添加字符串</button>
-      <button style="margin: 3px" @click="onDocNameClick()">取文件名</button>
-    </div>
-    <hr />
-    <div class="divItem">
-      文档文件名为：<span>{{ docName }}</span>
+    <div class="info-section">
+      <p>点击<b>"调整固定格式"</b>按钮可自定义各级标题的字体、字号、行距等参数，设置将保存在本地。</p>
     </div>
   </div>
 </template>
 
 <script>
-import { onMounted } from 'vue'
-import axios from 'axios'
-import taskPane from './js/taskpane.js'
 export default {
-  name: 'TaskPane',
-  data() {
-    return {
-      DemoSpan: '',
-      docName: ''
-    }
-  },
-  methods: {
-    onbuttonclick(id) {
-      return taskPane.onbuttonclick(id)
-    },
-    onDocNameClick() {
-      this.docName = taskPane.onbuttonclick('getDocName')
-    },
-    onOpenWeb() {
-      taskPane.onbuttonclick('openWeb', this.DemoSpan)
-    }
-  }
+  name: 'TaskPane'
 }
-onMounted(() => {
-  axios.get('/.debugTemp/NotifyDemoUrl').then((res) => {
-    this.DemoSpan = res.data
-  })
-})
 </script>
 
-<!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
-.global {
-  font-size: 15px;
-  min-height: 95%;
+.taskpane-panel {
+  padding: 16px;
+  font-size: 13px;
+  color: #333;
+  background: #fff;
+  min-height: 100%;
+  box-sizing: border-box;
 }
-.divItem {
-  margin-left: 5px;
-  margin-bottom: 18px;
-  font-size: 15px;
-  word-wrap: break-word;
+
+.panel-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 16px;
+  color: #1a1a1a;
+  border-bottom: 2px solid #c00;
+  padding-bottom: 8px;
+}
+
+.info-section {
+  margin-bottom: 16px;
+  padding: 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.info-section h4 {
+  font-size: 13px;
+  font-weight: bold;
+  color: #c00;
+  margin-bottom: 8px;
+}
+
+.info-section p {
+  line-height: 1.6;
+  margin: 0;
+}
+
+.info-section ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.8;
 }
 </style>

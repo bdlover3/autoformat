@@ -2,23 +2,27 @@
   <div class="settings-panel">
     <h3 class="panel-title">格式设置</h3>
 
+    <div class="btn-group-top">
+      <button class="btn btn-save" @click="saveSettings">保存设置</button>
+      <button class="btn btn-reset" @click="resetSettings">恢复默认</button>
+    </div>
+
     <div class="section">
-      <h4 class="section-title">页面边距（毫米）</h4>
+      <h4 class="section-title">正文</h4>
       <div class="form-row">
-        <label>上边距</label>
-        <input type="number" v-model.number="settings.marginTop" min="0" step="1" />
+        <label>字体</label>
+        <input type="text" v-model="settings.bodyFont" />
       </div>
       <div class="form-row">
-        <label>下边距</label>
-        <input type="number" v-model.number="settings.marginBottom" min="0" step="1" />
+        <label>字号（磅）</label>
+        <div class="font-size-input">
+          <input type="number" v-model.number="settings.bodyFontSize" min="5" max="72" step="0.5" />
+          <span class="font-size-label">{{ getFontSizeLabel(settings.bodyFontSize) }}</span>
+        </div>
       </div>
       <div class="form-row">
-        <label>左边距</label>
-        <input type="number" v-model.number="settings.marginLeft" min="0" step="1" />
-      </div>
-      <div class="form-row">
-        <label>右边距</label>
-        <input type="number" v-model.number="settings.marginRight" min="0" step="1" />
+        <label>行距（磅）</label>
+        <input type="number" v-model.number="settings.lineSpacing" min="10" max="50" step="0.1" />
       </div>
     </div>
 
@@ -98,21 +102,22 @@
     </div>
 
     <div class="section">
-      <h4 class="section-title">正文</h4>
+      <h4 class="section-title">页面边距（毫米）</h4>
       <div class="form-row">
-        <label>字体</label>
-        <input type="text" v-model="settings.bodyFont" />
+        <label>上边距</label>
+        <input type="number" v-model.number="settings.marginTop" min="0" step="1" />
       </div>
       <div class="form-row">
-        <label>字号（磅）</label>
-        <div class="font-size-input">
-          <input type="number" v-model.number="settings.bodyFontSize" min="5" max="72" step="0.5" />
-          <span class="font-size-label">{{ getFontSizeLabel(settings.bodyFontSize) }}</span>
-        </div>
+        <label>下边距</label>
+        <input type="number" v-model.number="settings.marginBottom" min="0" step="1" />
       </div>
       <div class="form-row">
-        <label>行距（磅）</label>
-        <input type="number" v-model.number="settings.lineSpacing" min="10" max="50" step="0.1" />
+        <label>左边距</label>
+        <input type="number" v-model.number="settings.marginLeft" min="0" step="1" />
+      </div>
+      <div class="form-row">
+        <label>右边距</label>
+        <input type="number" v-model.number="settings.marginRight" min="0" step="1" />
       </div>
     </div>
 
@@ -136,12 +141,15 @@
       <div class="form-row">
         <span class="form-hint">（启用后排版前会清除文档原有格式和自动编号，避免格式冲突）</span>
       </div>
+      <div class="form-row">
+        <label>屏蔽字体缺失提示</label>
+        <input type="checkbox" v-model="settings.disableFontWarning" />
+      </div>
+      <div class="form-row">
+        <span class="form-hint">（启用后将不再提示字体缺失信息）</span>
+      </div>
     </div>
 
-    <div class="btn-group">
-      <button class="btn btn-save" @click="saveSettings">保存设置</button>
-      <button class="btn btn-reset" @click="resetSettings">恢复默认</button>
-    </div>
   </div>
 </template>
 
@@ -172,7 +180,8 @@ export default {
       marginRight: 26,
       enablePageNumber: true,
       pageNumberPosition: 'center',
-      clearFormatting: true
+      clearFormatting: true,
+      disableFontWarning: false
     })
 
     onMounted(() => {
@@ -313,13 +322,13 @@ export default {
   padding: 4px 0;
 }
 
-.btn-group {
+.btn-group-top {
   display: flex;
   justify-content: center;
   gap: 12px;
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #e0e0e0;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
 }
 
 .btn {

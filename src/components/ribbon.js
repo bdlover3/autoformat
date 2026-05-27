@@ -22,55 +22,64 @@ const DEFAULT_SETTINGS = {
   marginRight: 26,         // 右边距26mm
   enablePageNumber: true,  // 是否启用页码
   pageNumberPosition: 'center',  // 页码位置：leftRight(左右), center(居中)，默认居中
-  clearFormatting: true    // 是否先清除所有格式
+  clearFormatting: true,    // 是否先清除所有格式
+  disableFontWarning: false // 是否永久屏蔽缺失字体提示
 }
 
-function getSettings() {
-  //先获取默认设置
-  const result = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
-  
-  //尝试从多个存储位置读取设置，合并到默认设置上
-  let saved = null
-  
-  //方法1: WPS PluginStorage
+//获取设置文件的持久化路径（使用AppData目录）
+function getSettingsFilePath() {
   try {
-    if (window.Application && window.Application.PluginStorage) {
-      let s = window.Application.PluginStorage.getItem('formatSettings')
-      if (s) {
-        saved = JSON.parse(s)
-      }
+    if (window.Application && window.Application.Env) {
+      const appDataPath = window.Application.Env.GetAppDataPath()
+      return appDataPath + '\\WPSAutoFormat\\settings.json'
     }
   } catch (e) {
-    console.log('从PluginStorage读取设置失败', e)
+  }
+  return null
+}
+
+//字体检测状态：在一个WPS运行周期内只提示一次
+let fontWarningShownInSession = false
+
+function getSettings() {
+  const result = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
+
+  let saved = null
+  const filePath = getSettingsFilePath()
+  if (filePath) {
+    try {
+      if (window.Application && window.Application.FileSystem) {
+        const fs = window.Application.FileSystem
+        if (fs.Exists(filePath)) {
+          let content = null
+          try {
+            content = fs.ReadFile(filePath)
+          } catch (e1) {
+            try {
+              content = fs.readFileString(filePath)
+            } catch (e2) { }
+          }
+          if (content) {
+            saved = JSON.parse(content)
+          }
+        }
+      }
+    } catch (e) {
+    }
   }
 
-  //方法2: WPS WPSPlugin Storage
   if (!saved) {
     try {
-      if (window.Application && window.Application.WPSPlugin && window.Application.WPSPlugin.Storage) {
-        let s = window.Application.WPSPlugin.Storage.GetItem('formatSettings')
+      if (window.Application && window.Application.PluginStorage) {
+        let s = window.Application.PluginStorage.getItem('formatSettings')
         if (s) {
           saved = JSON.parse(s)
         }
       }
     } catch (e) {
-      console.log('从WPSPlugin.Storage读取设置失败', e)
     }
   }
 
-  //方法3: localStorage
-  if (!saved) {
-    try {
-      let s = localStorage.getItem('formatSettings')
-      if (s) {
-        saved = JSON.parse(s)
-      }
-    } catch (e) {
-      console.log('从localStorage读取设置失败', e)
-    }
-  }
-
-  //合并保存的设置到默认设置上（确保新增字段有默认值）
   if (saved) {
     Object.keys(saved).forEach(key => {
       if (key in result) {
@@ -85,43 +94,32 @@ function getSettings() {
 function saveSettings(settings) {
   const settingsStr = JSON.stringify(settings)
 
-  //方法1: WPS PluginStorage
+  const filePath = getSettingsFilePath()
+  if (filePath) {
+    try {
+      if (window.Application && window.Application.FileSystem) {
+        const fs = window.Application.FileSystem
+        const dirPath = filePath.substring(0, filePath.lastIndexOf('\\'))
+        if (!fs.Exists(dirPath)) {
+          fs.Mkdir(dirPath)
+        }
+        if (fs.Exists(filePath)) {
+          fs.Remove(filePath)
+        }
+        fs.AppendFile(filePath, settingsStr)
+      }
+    } catch (e) {
+    }
+  }
+
   try {
     if (window.Application && window.Application.PluginStorage) {
       window.Application.PluginStorage.setItem('formatSettings', settingsStr)
-      console.log('设置已保存到PluginStorage')
-      return true
     }
   } catch (e) {
-    console.log('保存到PluginStorage失败', e)
   }
 
-  //方法2: WPS WPSPlugin Storage
-  try {
-    if (window.Application && window.Application.WPSPlugin && window.Application.WPSPlugin.Storage) {
-      window.Application.WPSPlugin.Storage.SetItem('formatSettings', settingsStr)
-      console.log('设置已保存到WPSPlugin.Storage')
-      return true
-    }
-  } catch (e) {
-    console.log('保存到WPSPlugin.Storage失败', e)
-  }
-
-  //方法3: localStorage
-  try {
-    localStorage.setItem('formatSettings', settingsStr)
-    console.log('设置已保存到localStorage')
-    return true
-  } catch (e) {
-    console.log('保存到localStorage失败', e)
-  }
-
-  return false
-}
-
-//磅转磅值(wps行距固定值用磅为单位)
-function ptToHalfPt(pt) {
-  return pt * 20  // WPS中行距固定值单位是1/20磅
+  return true
 }
 
 //毫米转磅(1mm ≈ 2.835磅)
@@ -139,7 +137,6 @@ function isFontInstalled(fontName) {
       }
     }
   } catch (e) {
-    console.log('检测字体失败', e)
   }
   return false
 }
@@ -165,26 +162,6 @@ function checkRequiredFonts(settings) {
   return missing
 }
 
-//字号磅值对应WPS的字号枚举值
-function fontSizeToEnum(pt) {
-  // WPS字号枚举
-  const map = {
-    42: 1,   // 初号
-    36: 2,   // 小初
-    26: 3,   // 一号
-    24: 4,   // 小一
-    22: 5,   // 二号
-    18: 6,   // 小二
-    16: 7,   // 三号
-    15: 8,   // 小三
-    14: 9,   // 四号
-    12: 10,  // 小四
-    10.5: 11, // 五号
-    9: 12,   // 小五
-  }
-  return map[pt] || pt
-}
-
 //这个函数在整个wps加载项中是第一个执行的
 function OnAddinLoad(ribbonUI) {
   if (typeof window.Application.ribbonUI != 'object') {
@@ -198,11 +175,44 @@ function OnAddinLoad(ribbonUI) {
   window.openOfficeFileFromSystemDemo = SystemDemo.openOfficeFileFromSystemDemo
   window.InvokeFromSystemDemo = SystemDemo.InvokeFromSystemDemo
 
-  //初始化默认设置
-  if (!window.Application.PluginStorage.getItem('formatSettings')) {
-    saveSettings(DEFAULT_SETTINGS)
+  //初始化：确保设置文件存在
+  try {
+    const filePath = getSettingsFilePath()
+    if (filePath && window.Application.FileSystem) {
+      const fs = window.Application.FileSystem
+      const dirPath = filePath.substring(0, filePath.lastIndexOf('\\'))
+      if (!fs.Exists(dirPath)) {
+        fs.Mkdir(dirPath)
+      }
+      if (!fs.Exists(filePath)) {
+        fs.AppendFile(filePath, JSON.stringify(DEFAULT_SETTINGS))
+      }
+    }
+  } catch (e) {
   }
+
   return true
+}
+
+function checkFontsOncePerSession() {
+  try {
+    const settings = getSettings()
+    if (settings.disableFontWarning) {
+      return
+    }
+
+    if (fontWarningShownInSession) {
+      return
+    }
+
+    const missingFonts = checkRequiredFonts(settings)
+    if (missingFonts.length > 0) {
+      const fontList = missingFonts.map(f => '• ' + f.name + '（替代：' + f.fallback + '）').join('\n')
+      alert('以下公文必需字体未安装，排版将使用替代字体：\n\n' + fontList + '\n\n建议安装缺失字体以获得最佳排版效果。可在设置中屏蔽此提示')
+      fontWarningShownInSession = true
+    }
+  } catch (e) {
+  }
 }
 
 function OnAction(control) {
@@ -224,9 +234,12 @@ function OnAction(control) {
       )
       break
     }
+    case 'btnUndoFormat': {
+      undoFormatDocument()
+      break
+    }
     case 'btnAbout': {
-      //显示关于信息
-      const aboutInfo = '公文排版助手\n\n版本：0.0.1 beta\n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。'
+      const aboutInfo = '公文排版助手\n\n版本：0.0.1 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。'
       alert(aboutInfo)
       break
     }
@@ -239,50 +252,75 @@ function OnAction(control) {
 function autoFormatDocument() {
   const doc = window.Application.ActiveDocument
   if (!doc) {
-    alert('当前没有打开任何文档')
     return
   }
 
   const settings = getSettings()
 
-  //检测必需字体是否安装
-  const missingFonts = checkRequiredFonts(settings)
-  if (missingFonts.length > 0) {
-    const fontList = missingFonts.map(f => '• ' + f.name + '（替代：' + f.fallback + '）').join('\n')
-    alert('以下公文必需字体未安装，排版将使用替代字体：\n\n' + fontList + '\n\n建议安装缺失字体以获得最佳排版效果。')
-  }
-
   try {
-    //0. 清除所有格式（可选）
-    if (settings.clearFormatting) {
-      clearAllFormatting(doc)
+    let undoRecord = null
+    try {
+      undoRecord = window.Application.UndoRecord
+      undoRecord.StartCustomRecord('公文一键排版')
+    } catch (e) {
     }
 
-    //1. 设置页面版式
+    try {
+      if (settings.clearFormatting) {
+        clearAllFormatting(doc)
+      }
+
     setupPage(doc, settings)
 
-    //2. 格式化正文
     formatBody(doc, settings)
 
-    //3. 格式化公文大标题和各级标题，返回标题结束位置
     const titleEnd = formatDocTitle(doc, settings)
 
-    //4. 处理标题下方的主送机关（含冒号的行取消缩进）
     formatAddressee(doc, titleEnd)
 
-    //5. 处理落款和日期
     formatSignatureAndDate(doc)
 
-    //6. 加粗"一是""二是""三是"等
     boldEnumerations(doc)
-
+    checkFontsOncePerSession()
+    if (undoRecord) {
+      undoRecord.EndCustomRecord()
+    }
+    window.lastFormatTime = new Date().getTime()
+    } catch (e) {
+      if (undoRecord) {
+        try {
+          undoRecord.EndCustomRecord()
+        } catch (e2) {}
+      }
+      throw e
+    }
   } catch (e) {
-    alert('排版过程中出现错误：' + e.message)
-    console.error('排版错误', e)
   }
 }
 
-//清除所有格式：清除字体、段落格式、自动编号等
+function undoFormatDocument() {
+  const doc = window.Application.ActiveDocument
+  if (!doc) {
+    return
+  }
+
+  try {
+    const commandBars = window.Application.CommandBars
+    if (commandBars) {
+      const undoButton = commandBars.FindControl(null, 128)
+      if (undoButton && undoButton.Enabled) {
+        undoButton.Execute()
+        return
+      }
+    }
+    try {
+      window.Application.Undo()
+    } catch (e) {
+    }
+  } catch (e) {
+  }
+}
+
 function clearAllFormatting(doc) {
   const fullRange = doc.Content
   //清除字体格式
@@ -364,7 +402,6 @@ function setupPageNumber(doc, settings) {
     //更新所有域
     doc.Fields.Update()
   } catch (e) {
-    console.log('设置页码失败:', e.message)
   }
 }
 
@@ -408,9 +445,10 @@ function clearAllHeadersFooters(doc) {
 }
 
 function formatBody(doc, settings) {
-  //设置全文为仿宋三号
+  //设置全文为仿宋三号（检测字体是否安装）
+  const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
   const fullRange = doc.Content
-  fullRange.Font.Name = settings.bodyFont
+  fullRange.Font.Name = bodyFontName
   fullRange.Font.Size = settings.bodyFontSize
   fullRange.Font.NameAscii = 'Times New Roman'
   fullRange.Font.NameOther = 'Times New Roman'
@@ -427,8 +465,11 @@ function formatBody(doc, settings) {
 }
 
 //判断文本是否像公文大标题行
+//标题特征：简短（不超过一行字数）、不以结构化标题序号开头、不以日期开头、不以冒号结尾
 function isTitleLike(text) {
-  if (!text || text.length < 2 || text.length > 80) return false
+  if (!text || text.length < 2) return false
+  //标题一般不超过22个字（二号字一行约22字），超过一行字数的肯定不是标题
+  if (text.length > 22) return false
   //不以结构化标题序号开头
   const h1Pattern = /^[一二三四五六七八九十]+、/
   const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
@@ -439,6 +480,8 @@ function isTitleLike(text) {
   if (/^\d{4}年/.test(text)) return false
   //不以冒号结尾（称呼/主送机关通常以冒号结尾）
   if (/[：:]$/.test(text)) return false
+  //包含句号的不是标题（标题一般不用句号）
+  if (/[。！？；]/.test(text)) return false
   return true
 }
 
@@ -464,20 +507,34 @@ function formatDocTitle(doc, settings) {
   }
   if (titleStart === -1) return -1
 
+  //检查第一段是否像标题（如果第一段不像标题，则不识别为标题区域）
+  const firstText = paragraphs.Item(titleStart).Range.Text.trim()
+  if (!isTitleLike(firstText)) {
+    //第一段不像标题，跳过标题识别，但仍需格式化各级标题
+    formatSubTitles(doc, settings, -1, -1, h1Pattern, h2Pattern, h3Pattern, h4Pattern)
+    return -1
+  }
+
   //收集连续的标题行：从第一个非空段开始，最多3行
-  //标题行的特征：非空、不像结构化标题、不以冒号结尾、不以日期开头
+  //标题行的特征：非空、像标题、与上一行之间没有空行
   let titleEnd = titleStart
-  for (let i = titleStart; i <= Math.min(titleStart + 2, count); i++) {
-    const text = paragraphs.Item(i).Range.Text.trim()
-    if (!text) break  //空行中断标题
-    if (!isTitleLike(text)) break  //不像标题则中断
+  for (let i = titleStart + 1; i <= Math.min(titleStart + 2, count); i++) {
+    const prevText = paragraphs.Item(i - 1).Range.Text.trim()
+    const currText = paragraphs.Item(i).Range.Text.trim()
+    //空行中断标题（和标题之间有空行则不是标题）
+    if (!currText) break
+    //上一行是空行也中断
+    if (!prevText) break
+    //不像标题则中断
+    if (!isTitleLike(currText)) break
     titleEnd = i
   }
 
   //格式化标题区域
+  const titleFontName = getAvailableFont(settings.titleFont, '宋体')
   for (let i = titleStart; i <= titleEnd; i++) {
     const para = paragraphs.Item(i)
-    para.Range.Font.Name = settings.titleFont
+    para.Range.Font.Name = titleFontName
     para.Range.Font.Size = settings.titleFontSize
     para.Alignment = 1  // 居中
     para.LineSpacingRule = 4
@@ -490,7 +547,19 @@ function formatDocTitle(doc, settings) {
   }
 
   //格式化正文中的各级标题（跳过标题区域）
-  for (let i = 1; i <= count; i++) {
+  formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Pattern, h3Pattern, h4Pattern)
+
+  //返回标题结束位置，供主送机关判断使用
+  return titleEnd
+}
+
+//格式化各级标题（一级、二级、三级、四级）
+//从后往前遍历，避免一级标题拆分插入新段落后索引偏移
+function formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Pattern, h3Pattern, h4Pattern) {
+  const paragraphs = doc.Paragraphs
+  const count = paragraphs.Count
+
+  for (let i = count; i >= 1; i--) {
     //跳过标题区域
     if (i >= titleStart && i <= titleEnd) continue
 
@@ -500,6 +569,43 @@ function formatDocTitle(doc, settings) {
 
     //一级标题
     if (h1Pattern.test(text)) {
+      //一级标题超一行时拆分处理：检查是否有句号，有则删掉句号并换行
+      if (text.length > 22) {
+        const periodIndex = text.indexOf('。')
+        if (periodIndex > 0) {
+          //找到句号，删掉句号并在句号位置插入换行
+          const beforePeriod = text.substring(0, periodIndex)
+          const afterPeriod = text.substring(periodIndex + 1)
+          //使用Range修改文本：删掉句号，插入换行
+          const startPos = para.Range.Start
+          const endPos = para.Range.End - 1
+          const rng = doc.Range(startPos, endPos)
+          rng.Text = beforePeriod + '\r' + afterPeriod
+          //换行后段落索引会变化，需要重新获取段落
+          //标题部分（当前段落）
+          const titlePara = paragraphs.Item(i)
+          titlePara.Range.Font.Name = settings.h1Font
+          titlePara.Range.Font.Size = settings.h1FontSize
+          titlePara.Range.Font.Bold = false
+          titlePara.CharacterUnitFirstLineIndent = 2
+          titlePara.LineSpacingRule = 4
+          titlePara.LineSpacing = settings.lineSpacing
+          try { titlePara.Range.ListFormat.RemoveNumbers() } catch (e) { }
+          //正文部分（下一个段落）
+          if (i + 1 <= paragraphs.Count) {
+            const bodyPara = paragraphs.Item(i + 1)
+            const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
+            bodyPara.Range.Font.Name = bodyFontName
+            bodyPara.Range.Font.Size = settings.bodyFontSize
+            bodyPara.Range.Font.NameAscii = 'Times New Roman'
+            bodyPara.Range.Font.NameOther = 'Times New Roman'
+            bodyPara.CharacterUnitFirstLineIndent = 2
+            bodyPara.LineSpacingRule = 4
+            bodyPara.LineSpacing = settings.lineSpacing
+          }
+          continue
+        }
+      }
       para.Range.Font.Name = settings.h1Font
       para.Range.Font.Size = settings.h1FontSize
       para.Range.Font.Bold = false
@@ -547,9 +653,6 @@ function formatDocTitle(doc, settings) {
       continue
     }
   }
-
-  //返回标题结束位置，供主送机关判断使用
-  return titleEnd
 }
 
 function formatAddressee(doc, titleEnd) {
@@ -698,7 +801,6 @@ function boldEnumerations(doc) {
       const rng = doc.Range(fullRange.Start + startOffset, fullRange.Start + endOffset)
       rng.Font.Bold = true
     } catch (e) {
-      console.log('加粗枚举项失败', e)
     }
   }
 }

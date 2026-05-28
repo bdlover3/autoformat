@@ -7,6 +7,7 @@
 	"scripts": {
 		"dev": "vite --port 3889",
 		"build": "vite build",
+		"pubtodoc": "wpsjs build && mkdir docs 2>nul && copy wps-addon-build\\autoformat.7z docs\\",
 		"preview": "vite preview",
 		"lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
 		"format": "prettier --write src/"

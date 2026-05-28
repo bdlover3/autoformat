@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<JsPlugin>
+  <ApiVersion>1.0.0</ApiVersion>
+  <Name>WPS公文自动格式化</Name>
+  <Description>一键格式化公文，符合标准公文格式要求。开源地址：https://gitee.com/rainsoft0456/wpsautoformat</Description>
+</JsPlugin>

@@ -239,7 +239,7 @@ function OnAction(control) {
       break
     }
     case 'btnAbout': {
-      const aboutInfo = '公文排版助手\n\n版本：0.0.1 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。'
+      const aboutInfo = '公文排版助手\n\n版本：0.0.1 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。\n\n项目地址:https://gitee.com/rainsoft0456/wpsautoformat'
       alert(aboutInfo)
       break
     }
@@ -272,13 +272,17 @@ function autoFormatDocument() {
 
     setupPage(doc, settings)
 
-    formatBody(doc, settings)
+    formatBody(doc, settings, -1)  // 先设置全文字体和基础格式，-1表示不跳过任何标题
 
     const titleEnd = formatDocTitle(doc, settings)
+
+    formatSpeechSignature(doc, titleEnd)
 
     formatAddressee(doc, titleEnd)
 
     formatSignatureAndDate(doc)
+
+    formatBody(doc, settings, titleEnd)
 
     boldEnumerations(doc)
     checkFontsOncePerSession()
@@ -322,23 +326,44 @@ function undoFormatDocument() {
 }
 
 function clearAllFormatting(doc) {
-  const fullRange = doc.Content
-  //清除字体格式
-  fullRange.Font.Reset()
-  //清除段落格式
-  fullRange.ParagraphFormat.Reset()
-  //清除所有自动编号/列表格式
+  //先处理自动编号：对所有有自动编号的段落都转为文本
+  //WPS自动编号（如"一、"）不在Range.Text中，是ListFormat生成的显示内容
+  //必须先调用ConvertNumbersToText()才能保留编号文字
   const paragraphs = doc.Paragraphs
   const count = paragraphs.Count
+
+  //第一步：遍历所有段落，将自动编号转为文本
   for (let i = 1; i <= count; i++) {
     const para = paragraphs.Item(i)
-    //移除自动编号
+    
+    //检查是否有自动编号
+    let hasListFormat = false
     try {
-      para.Range.ListFormat.RemoveNumbers()
-    } catch (e) {
-      //忽略不支持的段落
+      if (para.Range.ListFormat.ListType !== 0) {
+        hasListFormat = true
+      }
+    } catch (e) { }
+    
+    if (hasListFormat) {
+      //将自动编号转为文本（这样RemoveNumbers就不会删除编号了）
+      try {
+        para.Range.ListFormat.ConvertNumbersToText()
+      } catch (e) { }
     }
   }
+  
+  //第二步：清除所有列表格式（此时编号已经是文本，不会被删除）
+  for (let i = 1; i <= count; i++) {
+    const para = paragraphs.Item(i)
+    try {
+      para.Range.ListFormat.RemoveNumbers()
+    } catch (e) { }
+  }
+  
+  //第三步：清除字体和段落格式
+  const fullRange = doc.Content
+  fullRange.Font.Reset()
+  fullRange.ParagraphFormat.Reset()
 }
 
 function setupPage(doc, settings) {
@@ -361,44 +386,64 @@ function setupPageNumber(doc, settings) {
   if (!settings.enablePageNumber) return
   
   try {
-    //公文页码格式：4号宋体半角阿拉伯数字，带一字线格式 "- X -"
     const firstSection = doc.Sections.Item(1)
     if (!firstSection.Footers || !firstSection.Footers.Item) {
-      return  //不支持页脚操作
+      return
     }
 
-    //定义常量
     const wdHeaderFooterPrimary = 1
     const wdAlignParagraphCenter = 1
     const wdFieldPage = 33
 
-    //先清除所有页眉页脚
-    clearAllHeadersFooters(doc)
-    
     //页面设置
     doc.PageSetup.DifferentFirstPageHeaderFooter = false
     doc.PageSetup.OddAndEvenPagesHeaderFooter = false
     doc.PageSetup.FooterDistance = 27 * 2.83465  // mm转pt
 
-    //设置居中页码
+    //获取页脚
     const footer = firstSection.Footers.Item(wdHeaderFooterPrimary)
+    //断开与前一节的链接
+    try { footer.LinkToPrevious = false } catch (e) { }
+    
+    //删除旧PageNumbers集合中的页码对象
+    try {
+      const oldPageNumbers = footer.PageNumbers
+      for (let k = oldPageNumbers.Count; k >= 1; k--) {
+        try { oldPageNumbers.Item(k).Delete() } catch (e) { }
+      }
+    } catch (e) { }
+    
+    //删除页脚Range中的所有域
     const rng = footer.Range
+    try {
+      const fields = rng.Fields
+      for (let k = fields.Count; k >= 1; k--) {
+        try { fields.Item(k).Delete() } catch (e) { }
+      }
+    } catch (e) { }
     
-    //先设置格式
+    //删除页脚中的文本框和图形
+    try { rng.ShapeRange.Delete() } catch (e) { }
+    
+    //清空页脚文本
+    rng.Text = ""
+    
+    //设置页脚格式
     rng.ParagraphFormat.Alignment = wdAlignParagraphCenter
-    rng.Font.Name = "宋体"
-    rng.Font.Size = 12  // 4号=12pt
     
-    //先写入文本
-    rng.Text = "— # —"
+    //使用PageNumbers.Add方法添加页码（这是WPS推荐的方式）
+    const pageNumbers = footer.PageNumbers
+    const wdAlignPageNumberCenter = 1
+    const pgNum = pageNumbers.Add(wdAlignPageNumberCenter, true)
     
-    //查找占位符#并替换为PAGE域
-    const findRng = rng.Duplicate
-    findRng.Find.Text = "#"
-    if (findRng.Find.Execute()) {
-      findRng.Fields.Add(findRng, wdFieldPage, "", false)
-    }
-
+    //设置页码样式
+    pageNumbers.NumberStyle = 57  // wdPageNumberStyleNumberInDash (- 1 -)
+    
+    //设置页码字体和字号（在添加页码之后设置才能生效）
+    const footerRng = footer.Range
+    footerRng.Font.Name = "宋体"
+    footerRng.Font.Size = 12  // 4号=12pt
+    
     //更新所有域
     doc.Fields.Update()
   } catch (e) {
@@ -430,12 +475,21 @@ function clearAllHeadersFooters(doc) {
     for (let j = 1; j <= footers.Count; j++) {
       try {
         const footer = footers.Item(j)
+        //断开与前一节的链接
+        try { footer.LinkToPrevious = false } catch (e) { }
+        //删除PageNumbers集合中的所有页码对象
+        try {
+          const pageNumbers = footer.PageNumbers
+          for (let k = pageNumbers.Count; k >= 1; k--) {
+            try { pageNumbers.Item(k).Delete() } catch (e) { }
+          }
+        } catch (e) { }
         //先取消所有域的链接（将域转换为纯文本）
         const fields = footer.Range.Fields
         for (let k = fields.Count; k >= 1; k--) {
-          try { fields.Item(k).Unlink() } catch (e) { }
+          try { fields.Item(k).Delete() } catch (e) { }
         }
-        //删除页脚中的所有文本框
+        //删除页脚中的所有文本框和图形
         try { footer.Range.ShapeRange.Delete() } catch (e) { }
         //最后清空文本
         footer.Range.Text = ""
@@ -444,23 +498,57 @@ function clearAllHeadersFooters(doc) {
   }
 }
 
-function formatBody(doc, settings) {
-  //设置全文为仿宋三号（检测字体是否安装）
+function formatBody(doc, settings, titleEnd) {
   const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
-  const fullRange = doc.Content
-  fullRange.Font.Name = bodyFontName
-  fullRange.Font.Size = settings.bodyFontSize
-  fullRange.Font.NameAscii = 'Times New Roman'
-  fullRange.Font.NameOther = 'Times New Roman'
-
-  //设置行距为固定值28.9磅
   const paragraphs = doc.Paragraphs
   const count = paragraphs.Count
+
+  //只有 titleEnd = -1 时才设置全文字体
+  if (titleEnd === -1) {
+    const fullRange = doc.Content
+    fullRange.Font.Name = bodyFontName
+    fullRange.Font.Size = settings.bodyFontSize
+    fullRange.Font.NameAscii = 'Times New Roman'
+    fullRange.Font.NameOther = 'Times New Roman'
+    return
+  }
+
+  //否则是第二次调用，设置段落格式，但跳过已处理的段落
+  const h1Pattern = /^[一二三四五六七八九十]+、/
+  const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
+  const h3Pattern = /^\d+\./
+  const h4Pattern = /^[（\(]\d+[）\)]/
+
   for (let i = 1; i <= count; i++) {
     const para = paragraphs.Item(i)
+    const text = para.Range.Text.trim()
+
+    //跳过空行
+    if (!text) continue
+
+    //跳过标题区域（直到titleEnd）
+    if (titleEnd > 0 && i <= titleEnd) continue
+
+    //跳过讲话稿落款
+    if (isSpeechSignature(text)) continue
+
+    //跳过一级标题
+    if (h1Pattern.test(text)) continue
+    //跳过二级标题
+    if (h2Pattern.test(text)) continue
+    //跳过三级标题
+    if (h3Pattern.test(text)) continue
+    //跳过四级标题
+    if (h4Pattern.test(text)) continue
+    //跳过主送机关（以冒号结尾）
+    if (/[：:]$/.test(text)) continue
+    //跳过日期和落款
+    if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) continue
+
     para.LineSpacingRule = 4  // wdLineSpaceExactly = 4 固定值
     para.LineSpacing = settings.lineSpacing
     para.CharacterUnitFirstLineIndent = 2  // 首行缩进2字符
+    para.Alignment = 3  // wdAlignParagraphJustify = 3 两端对齐
   }
 }
 
@@ -482,7 +570,24 @@ function isTitleLike(text) {
   if (/[：:]$/.test(text)) return false
   //包含句号的不是标题（标题一般不用句号）
   if (/[。！？；]/.test(text)) return false
+  //排除讲话稿发言人格式：
+  //1. 纯姓名2-4个汉字
+  if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
+  //2. 单位+姓名（中间有空格）
+  if (/.+\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
   return true
+}
+
+//判断文本是否像讲话稿发言人
+function isSpeechSignature(text) {
+  if (!text) return false
+  //1. 纯姓名2-4个汉字
+  if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
+  //2. 单位+姓名（中间有空格）
+  if (/.+\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
+  //日期格式
+  if (/^[（\(]?\d{4}年\d{1,2}月\d{1,2}日[）\)]?$/.test(text)) return true
+  return false
 }
 
 //识别并格式化公文大标题（支持多行标题）
@@ -539,7 +644,8 @@ function formatDocTitle(doc, settings) {
     para.Alignment = 1  // 居中
     para.LineSpacingRule = 4
     para.LineSpacing = settings.lineSpacing
-    para.CharacterUnitFirstLineIndent = 0  // 标题不缩进
+    para.CharacterUnitFirstLineIndent = 0  // 标题不缩进（字符单位）
+    para.FirstLineIndent = 0  // 标题不缩进（磅值单位）
     //确保标题不会被自动编号
     try {
       para.Range.ListFormat.RemoveNumbers()
@@ -569,6 +675,7 @@ function formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Patte
 
     //一级标题
     if (h1Pattern.test(text)) {
+      const h1FontName = getAvailableFont(settings.h1Font, '黑体')
       //一级标题超一行时拆分处理：检查是否有句号，有则删掉句号并换行
       if (text.length > 22) {
         const periodIndex = text.indexOf('。')
@@ -584,12 +691,13 @@ function formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Patte
           //换行后段落索引会变化，需要重新获取段落
           //标题部分（当前段落）
           const titlePara = paragraphs.Item(i)
-          titlePara.Range.Font.Name = settings.h1Font
+          titlePara.Range.Font.Name = h1FontName
           titlePara.Range.Font.Size = settings.h1FontSize
           titlePara.Range.Font.Bold = false
           titlePara.CharacterUnitFirstLineIndent = 2
           titlePara.LineSpacingRule = 4
           titlePara.LineSpacing = settings.lineSpacing
+          titlePara.Alignment = 0  // 左对齐
           try { titlePara.Range.ListFormat.RemoveNumbers() } catch (e) { }
           //正文部分（下一个段落）
           if (i + 1 <= paragraphs.Count) {
@@ -602,16 +710,18 @@ function formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Patte
             bodyPara.CharacterUnitFirstLineIndent = 2
             bodyPara.LineSpacingRule = 4
             bodyPara.LineSpacing = settings.lineSpacing
+            bodyPara.Alignment = 3  // 两端对齐
           }
           continue
         }
       }
-      para.Range.Font.Name = settings.h1Font
+      para.Range.Font.Name = h1FontName
       para.Range.Font.Size = settings.h1FontSize
       para.Range.Font.Bold = false
       para.CharacterUnitFirstLineIndent = 2
       para.LineSpacingRule = 4
       para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0  // 左对齐
       //确保不会被自动编号
       try {
         para.Range.ListFormat.RemoveNumbers()
@@ -628,29 +738,121 @@ function formatSubTitles(doc, settings, titleStart, titleEnd, h1Pattern, h2Patte
       para.CharacterUnitFirstLineIndent = 2
       para.LineSpacingRule = 4
       para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0  // 左对齐
       continue
     }
 
     //三级标题
     if (h3Pattern.test(text)) {
-      para.Range.Font.Name = settings.h3Font
+      const h3FontName = getAvailableFont(settings.h3Font, '仿宋')
+      para.Range.Font.Name = h3FontName
       para.Range.Font.Size = settings.h3FontSize
       para.Range.Font.Bold = false
       para.CharacterUnitFirstLineIndent = 2
       para.LineSpacingRule = 4
       para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0  // 左对齐
       continue
     }
 
     //四级标题
     if (h4Pattern.test(text)) {
-      para.Range.Font.Name = settings.h4Font
+      const h4FontName = getAvailableFont(settings.h4Font, '仿宋')
+      para.Range.Font.Name = h4FontName
       para.Range.Font.Size = settings.h4FontSize
       para.Range.Font.Bold = false
       para.CharacterUnitFirstLineIndent = 2
       para.LineSpacingRule = 4
       para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0  // 左对齐
       continue
+    }
+  }
+}
+
+//检测并格式化讲话稿/发言提纲的标题后落款
+//讲话稿特征：标题后紧跟落款（如"XXX单位 李XXX"或"李XXX"），可能有日期
+//格式要求：
+//- 字体：署名、日期三号仿宋_GB2312
+//- 行距：标题与署名之间空1行；署名与日期之间不空行；署名与正文之间空1行
+//- 对齐：全部居中
+function formatSpeechSignature(doc, titleEnd) {
+  if (titleEnd < 1) return
+
+  const paragraphs = doc.Paragraphs
+  const count = paragraphs.Count
+
+  //日期格式：XXXX年XX月XX日 或 （XXXX年XX月XX日）
+  const datePattern = /^[（\(]?\d{4}年\d{1,2}月\d{1,2}日[）\)]?$/
+
+  //从标题后开始，检查1-3个非空段落
+  let checkedParas = []
+  for (let i = titleEnd + 1; i <= Math.min(titleEnd + 5, count); i++) {
+    const para = paragraphs.Item(i)
+    const text = para.Range.Text.trim()
+    if (!text) continue
+    //遇到非落款文本则停止
+    if (!isSpeechSignature(text)) break
+    checkedParas.push({ index: i, para: para, text: text })
+    if (checkedParas.length >= 3) break
+  }
+
+  if (checkedParas.length === 0) return
+
+  //确保标题与第一个落款之间有一个空行
+  const firstSignatureIndex = checkedParas[0].index
+  if (firstSignatureIndex === titleEnd + 1) {
+    //标题后没有空行，插入一个空行
+    const titlePara = paragraphs.Item(titleEnd)
+    const titleEndPos = titlePara.Range.End
+    const newPara = doc.Range(titleEndPos, titleEndPos)
+    newPara.InsertParagraphAfter()
+    //插入空行后，checkedParas的索引需要+1
+    for (let k = 0; k < checkedParas.length; k++) {
+      checkedParas[k].index += 1
+    }
+  }
+
+  //检测到讲话稿格式，格式化落款行
+  let lastSignatureIndex = -1
+  for (let j = 0; j < checkedParas.length; j++) {
+    const item = checkedParas[j]
+    const text = item.text
+    lastSignatureIndex = item.index
+
+    //设置字体：三号仿宋_GB2312
+    const speechFontName = getAvailableFont('仿宋_GB2312', '仿宋')
+    item.para.Range.Font.Name = speechFontName
+    item.para.Range.Font.Size = 16  // 三号=16pt
+
+    //设置居中对齐
+    item.para.CharacterUnitFirstLineIndent = 0
+    item.para.FirstLineIndent = 0
+    item.para.Alignment = 1  // 居中对齐
+
+    //设置行距
+    item.para.LineSpacingRule = 4  // 固定值
+    item.para.LineSpacing = 28.9  // 固定行距
+
+    //如果是日期行，处理完毕
+    if (datePattern.test(text)) {
+      break
+    }
+  }
+
+  //在落款和正文之间添加一个空行
+  if (lastSignatureIndex > 0 && lastSignatureIndex < count) {
+    const nextParaIndex = lastSignatureIndex + 1
+    if (nextParaIndex <= count) {
+      const nextPara = paragraphs.Item(nextParaIndex)
+      const nextText = nextPara.Range.Text.trim()
+      //如果后面有内容，且不是空行，则插入空行
+      if (nextText && nextText.length > 0) {
+        const lastSignaturePara = paragraphs.Item(lastSignatureIndex)
+        const lastEndPos = lastSignaturePara.Range.End
+        const newPara = doc.Range(lastEndPos, lastEndPos)
+        newPara.InsertParagraphAfter()
+      }
     }
   }
 }
@@ -737,7 +939,79 @@ function formatSignatureAndDate(doc) {
 
   //现在统一处理，先处理落款再处理日期（从后往前处理避免索引问题）
   if (dateInfo) {
-    //处理落款行：与日期中线对齐，使用空格填充
+    //计算最后一行正文与落款之间需要的空行数
+    //先找到落款区域之前的最后一个非空段落（正文最后一行）
+    let lastBodyIndex = -1
+    const firstSignatureIndex = signatureInfos.length > 0 ? signatureInfos[signatureInfos.length - 1].index : dateInfo.index
+    for (let i = firstSignatureIndex - 1; i >= 1; i--) {
+      const prevText = paragraphs.Item(i).Range.Text.trim()
+      if (prevText) {
+        lastBodyIndex = i
+        break
+      }
+    }
+
+    //计算正文最后一行到页面底部的剩余空间
+    //如果剩余空间不够放落款+日期（约2行），则在下一页显示
+    //如果剩余空间大于4行，在正文和落款之间插入适当空行
+    if (lastBodyIndex > 0) {
+      const lastBodyPara = paragraphs.Item(lastBodyIndex)
+      //获取页面高度和当前段落位置
+      const pageHeight = doc.PageSetup.PageHeight
+      const topMargin = doc.PageSetup.TopMargin
+      const bottomMargin = doc.PageSetup.BottomMargin
+      const contentHeight = pageHeight - topMargin - bottomMargin  // 版心高度（磅）
+      const lineSpacing = 28.9  // 固定行距
+      const totalLines = Math.floor(contentHeight / lineSpacing)  // 版心总行数（约22行）
+
+      //获取正文最后一行的垂直位置
+      const lastBodyTop = lastBodyPara.Range.Information(4)  // wdVerticalPositionRelativeToPage = 4
+      //获取落款第一行的垂直位置
+      const firstSigPara = signatureInfos.length > 0 ? signatureInfos[signatureInfos.length - 1].para : dateInfo.para
+      const firstSigTop = firstSigPara.Range.Information(4)
+
+      if (lastBodyTop > 0 && firstSigTop > 0) {
+        //计算正文最后一行之后还有多少行空间
+        const remainingSpace = contentHeight - (lastBodyTop - topMargin) - lineSpacing
+        const remainingLines = Math.floor(remainingSpace / lineSpacing)
+
+        //落款+日期需要约2-3行，加上1行空行间距
+        const neededLines = 3  // 落款+日期+空行
+
+        if (remainingLines < neededLines) {
+          //空间不够，在正文后插入分页符，让落款移到下一页
+          //先找到正文和落款之间的空行
+          for (let i = lastBodyIndex + 1; i < firstSignatureIndex; i++) {
+            const paraText = paragraphs.Item(i).Range.Text.trim()
+            if (!paraText) {
+              //在空行处插入分页符
+              const insertPara = paragraphs.Item(i)
+              insertPara.Range.InsertBreak(7)  // wdSectionBreakNextPage = 7
+              break
+            }
+          }
+        } else if (remainingLines > neededLines + 2) {
+          //空间充裕，在正文和落款之间插入空行调整间距
+          //确保至少有1行空行
+          let hasBlankLine = false
+          for (let i = lastBodyIndex + 1; i < firstSignatureIndex; i++) {
+            const paraText = paragraphs.Item(i).Range.Text.trim()
+            if (!paraText) {
+              hasBlankLine = true
+              break
+            }
+          }
+          if (!hasBlankLine) {
+            //在正文和落款之间插入空行
+            const insertPos = lastBodyPara.Range.End
+            const newPara = doc.Range(insertPos, insertPos)
+            newPara.InsertParagraphAfter()
+          }
+        }
+      }
+    }
+
+    //处理落款行
     for (let i = signatureInfos.length - 1; i >= 0; i--) {
       const line = signatureInfos[i]
       //清除原有缩进设置
@@ -747,10 +1021,10 @@ function formatSignatureAndDate(doc) {
       line.para.RightIndent = 0
       line.para.Alignment = 0  // 左对齐
 
-      //在落款前添加空格，使落款中心与日期中心对齐
+      //在落款前添加空格，使落款整体向右移动四个中文字符
       const sigLen = line.text.length
-      //版心28字，落款右移调整：右空-1（再右移4字）
-      const sigSpaceCount = Math.max(0, 28 - sigLen + 1)
+      //版心28字，落款右移四个字符
+      const sigSpaceCount = Math.max(0, 28 - sigLen + 4)
       const sigSpaces = ' '.repeat(sigSpaceCount)
 
       //使用精确的范围修改，避免覆盖段落标记
@@ -764,9 +1038,9 @@ function formatSignatureAndDate(doc) {
     //处理日期行
     const dateText = dateInfo.text
     const dateLen = dateText.length
-    //计算需要填充的空格数：版心28字 - 日期长度 + 2（再右移5字）+ 半个汉字
-    const spaceCount = Math.max(0, 28 - dateLen + 2)
-    const spaces = ' '.repeat(spaceCount) + '\u3000'  // 添加一个全角空格（半个汉字宽度）
+    //计算需要填充的空格数：版心28字 - 日期长度 + 6（比落款多右移两个字符）
+    const spaceCount = Math.max(0, 28 - dateLen + 6)
+    const spaces = ' '.repeat(spaceCount)
 
     //清除原有缩进设置
     dateInfo.para.CharacterUnitFirstLineIndent = 0
@@ -775,8 +1049,7 @@ function formatSignatureAndDate(doc) {
     dateInfo.para.RightIndent = 0
     dateInfo.para.Alignment = 0  // 左对齐
 
-    //在日期前添加空格，使其右空三字（调整位置）
-    //使用精确的范围修改，避免覆盖段落标记
+    //在日期前添加空格
     const dateStartPos = dateInfo.para.Range.Start
     const dateEndPos = dateInfo.para.Range.End - 1
     const dateRng = doc.Range(dateStartPos, dateEndPos)

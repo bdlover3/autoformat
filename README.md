@@ -1,35 +1,76 @@
-# wpsdemovue3
+# WPS公文自动格式化插件
 
-This template should help get you started developing with Vue 3 in Vite.
+一键格式化公文，符合标准公文格式要求。
 
-## Recommended IDE Setup
+## 功能特性
 
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+- 一键自动格式化公文
+- 页面设置（A4纸，37/35/28/26mm边距）
+- 字体设置（标题2号方正小标宋，正文3号仿宋GB2312）
+- 段落设置（固定行距28.9磅）
+- 标题识别和格式化（一、二、三级标题）
+- 页码设置（带横线，4号宋体）
+- 保存和恢复自定义设置
+- 本地持久化存储设置
 
-## Customize configuration
+## 开源地址
 
-See [Vite Configuration Reference](https://vitejs.dev/config/).
+<https://gitee.com/rainsoft0456/wpsautoformat>
 
-## Project Setup
+## 项目设置
 
-```sh
 npm install
-```
 
-### Compile and Hot-Reload for Development
-
-```sh
-npm run dev
-```
-
-### Compile and Minify for Production
+### 开发调试
 
 ```sh
-npm run build
+wpsjs debug
 ```
 
-### Lint with [ESLint](https://eslint.org/)
+### 构建生产版本
 
 ```sh
-npm run lint
+//生成资源
+wpsjs build
+//打包为exe文件
+wpsjs build -exe
+//发布
+wpsjs publish
+
+//详情请见wpsjs文档 加载项相关章节
+//https://qn.cache.wpscdn.cn/encs/doc/office_v19/index.htm
 ```
+
+
+## 版本历史
+
+### 1.0.0 (2026-05-27)
+
+- 正式发布 1.0.0 版本
+
+## 使用说明
+
+1. 在 WPS 文字中打开需要格式化的文档
+2. 点击功能区的"一键排版"按钮
+3. 如需调整格式，点击"格式设置"进行配置
+4. 点击"一键恢复"可撤销排版操作
+
+## 公文格式规范
+
+- 纸张：A4（210mm×297mm）
+- 页边距：上37mm、下35mm、左28mm、右26mm
+- 标题：2号方正小标宋简体
+- 正文：3号仿宋GB2312
+- 一级标题：黑体三号（一、）
+- 二级标题：楷体GB2312三号（（二））
+- 三级标题：仿宋GB2312三号（3.）
+- 四级标题：仿宋GB2312三号（（4））
+- 行距：固定值28.9磅
+- 页码：4号半角宋体阿拉伯数字，带横线（- 1 -）
+
+## 技术栈
+
+- Vue 3
+- Vite
+- WPS JSAPI
+

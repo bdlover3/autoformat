@@ -16,10 +16,19 @@
 ## 开源地址
 
 <https://gitee.com/rainsoft0456/wpsautoformat>
+<https://github.com/bdlover3/autoformat>
+## 直接使用?
+### 1.打开 https://wpsautoformat.netlify.app/ 安装插件即可
+  备用地址:https://bdlover3.github.io/autoformat
+### 2.下载右侧release版本 双击安装即可使用
 
-## 项目设置
+## 项目初始化
+### 安装依赖
 
-npm install
+```sh
+//安装wps的js加载项开发工具
+npm install -g wpsjs
+```
 
 ### 开发调试
 

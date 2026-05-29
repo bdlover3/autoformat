@@ -238,8 +238,12 @@ function OnAction(control) {
       undoFormatDocument()
       break
     }
+    case 'btnCheckUpdate': {
+      checkForUpdates()
+      break
+    }
     case 'btnAbout': {
-      const aboutInfo = '公文排版助手\n\n版本：0.0.1 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。\n\n项目地址:https://gitee.com/rainsoft0456/wpsautoformat'
+      const aboutInfo = '公文排版助手\n\n版本：1.0.1 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。\n\n项目地址:https://gitee.com/rainsoft0456/wpsautoformat'
       alert(aboutInfo)
       break
     }
@@ -270,26 +274,25 @@ function autoFormatDocument() {
         clearAllFormatting(doc)
       }
 
-    setupPage(doc, settings)
+      setupPage(doc, settings)
 
-    formatBody(doc, settings, -1)  // 先设置全文字体和基础格式，-1表示不跳过任何标题
+      const titleEnd = formatDocTitle(doc, settings)
 
-    const titleEnd = formatDocTitle(doc, settings)
+      formatSpeechSignature(doc, titleEnd)
 
-    formatSpeechSignature(doc, titleEnd)
+      formatAddressee(doc, titleEnd)
 
-    formatAddressee(doc, titleEnd)
+      formatSignatureAndDate(doc)
 
-    formatSignatureAndDate(doc)
+      formatAll(doc, settings, titleEnd)
 
-    formatBody(doc, settings, titleEnd)
+      boldEnumerations(doc)
 
-    boldEnumerations(doc)
-    checkFontsOncePerSession()
-    if (undoRecord) {
-      undoRecord.EndCustomRecord()
-    }
-    window.lastFormatTime = new Date().getTime()
+      checkFontsOncePerSession()
+      if (undoRecord) {
+        undoRecord.EndCustomRecord()
+      }
+      window.lastFormatTime = new Date().getTime()
     } catch (e) {
       if (undoRecord) {
         try {
@@ -498,82 +501,199 @@ function clearAllHeadersFooters(doc) {
   }
 }
 
-function formatBody(doc, settings, titleEnd) {
+function formatAll(doc, settings, titleEnd) {
   const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
+  const titleFontName = getAvailableFont(settings.titleFont, '宋体')
+  const h1FontName = getAvailableFont(settings.h1Font, '黑体')
+  const h2FontName = getAvailableFont(settings.h2Font, '楷体')
+  const h3FontName = getAvailableFont(settings.h3Font, '仿宋')
+  const h4FontName = getAvailableFont(settings.h4Font, '仿宋')
+
   const paragraphs = doc.Paragraphs
   const count = paragraphs.Count
 
-  //只有 titleEnd = -1 时才设置全文字体
-  if (titleEnd === -1) {
-    const fullRange = doc.Content
-    fullRange.Font.Name = bodyFontName
-    fullRange.Font.Size = settings.bodyFontSize
-    fullRange.Font.NameAscii = 'Times New Roman'
-    fullRange.Font.NameOther = 'Times New Roman'
-    return
-  }
-
-  //否则是第二次调用，设置段落格式，但跳过已处理的段落
   const h1Pattern = /^[一二三四五六七八九十]+、/
   const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
   const h3Pattern = /^\d+\./
   const h4Pattern = /^[（\(]\d+[）\)]/
+  const attachmentPattern = /^附\s*件\d*/
 
   for (let i = 1; i <= count; i++) {
     const para = paragraphs.Item(i)
     const text = para.Range.Text.trim()
 
-    //跳过空行
     if (!text) continue
 
-    //跳过标题区域（直到titleEnd）
-    if (titleEnd > 0 && i <= titleEnd) continue
+    if (attachmentPattern.test(text)) {
+      para.Range.Font.Name = h1FontName
+      para.Range.Font.Size = settings.bodyFontSize
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.Alignment = 0
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.CharacterUnitFirstLineIndent = 0
+      para.FirstLineIndent = 0
+      continue
+    }
 
-    //跳过讲话稿落款
-    if (isSpeechSignature(text)) continue
+    if (titleEnd > 0 && i <= titleEnd) {
+      para.Range.Font.Name = titleFontName
+      para.Range.Font.Size = settings.titleFontSize
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.Alignment = 1
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.CharacterUnitFirstLineIndent = 0
+      para.FirstLineIndent = 0
+      continue
+    }
 
-    //跳过一级标题
-    if (h1Pattern.test(text)) continue
-    //跳过二级标题
-    if (h2Pattern.test(text)) continue
-    //跳过三级标题
-    if (h3Pattern.test(text)) continue
-    //跳过四级标题
-    if (h4Pattern.test(text)) continue
-    //跳过主送机关（以冒号结尾）
-    if (/[：:]$/.test(text)) continue
-    //跳过日期和落款
-    if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) continue
+    //检查署名机构：在标题之后、单独一行、不超过30字、与标题和正文都有空行
+    if (titleEnd > 0 && i === titleEnd + 2) {
+      const lineBeforeOrg = paragraphs.Item(i - 1).Range.Text.trim()
+      if (!lineBeforeOrg && text && text.length > 0 && text.length <= 30) {
+        let isOrg = false
+        if (i + 1 <= count) {
+          const lineAfterOrg = paragraphs.Item(i + 1).Range.Text.trim()
+          if (!lineAfterOrg) {
+            isOrg = true
+          } else if (lineAfterOrg.length > 30 || /[。！？；]/.test(lineAfterOrg)) {
+            isOrg = true
+          }
+        }
+        
+        if (isOrg) {
+          const orgFontName = getAvailableFont('仿宋_GB2312', '仿宋')
+          para.Range.Font.Name = orgFontName
+          para.Range.Font.Size = 16
+          para.Range.Font.NameAscii = 'Times New Roman'
+          para.Range.Font.NameOther = 'Times New Roman'
+          para.CharacterUnitFirstLineIndent = 0
+          para.FirstLineIndent = 0
+          para.Alignment = 1
+          para.LineSpacingRule = 4
+          para.LineSpacing = 28.9
+          continue
+        }
+      }
+    }
 
-    para.LineSpacingRule = 4  // wdLineSpaceExactly = 4 固定值
+    if (isSpeechSignature(text)) {
+      const speechFontName = getAvailableFont('仿宋_GB2312', '仿宋')
+      para.Range.Font.Name = speechFontName
+      para.Range.Font.Size = 16
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 0
+      para.FirstLineIndent = 0
+      para.Alignment = 1
+      para.LineSpacingRule = 4
+      para.LineSpacing = 28.9
+      continue
+    }
+
+    if (h1Pattern.test(text)) {
+      para.Range.Font.Name = h1FontName
+      para.Range.Font.Size = settings.h1FontSize
+      para.Range.Font.Bold = false
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 2
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0
+      try { para.Range.ListFormat.RemoveNumbers() } catch (e) { }
+      continue
+    }
+
+    if (h2Pattern.test(text)) {
+      para.Range.Font.Name = h2FontName
+      para.Range.Font.Size = settings.h2FontSize
+      para.Range.Font.Bold = false
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 2
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0
+      continue
+    }
+
+    if (h3Pattern.test(text)) {
+      para.Range.Font.Name = h3FontName
+      para.Range.Font.Size = settings.h3FontSize
+      para.Range.Font.Bold = false
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 2
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0
+      continue
+    }
+
+    if (h4Pattern.test(text)) {
+      para.Range.Font.Name = h4FontName
+      para.Range.Font.Size = settings.h4FontSize
+      para.Range.Font.Bold = false
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 2
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0
+      continue
+    }
+
+    if (/[：:]$/.test(text) && text.length <= 15) {
+      para.Range.Font.Name = bodyFontName
+      para.Range.Font.Size = settings.bodyFontSize
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.CharacterUnitFirstLineIndent = 0
+      para.FirstLineIndent = 0
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      para.Alignment = 0
+      continue
+    }
+
+    if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) {
+      para.Range.Font.Name = bodyFontName
+      para.Range.Font.Size = settings.bodyFontSize
+      para.Range.Font.NameAscii = 'Times New Roman'
+      para.Range.Font.NameOther = 'Times New Roman'
+      para.LineSpacingRule = 4
+      para.LineSpacing = settings.lineSpacing
+      continue
+    }
+
+    para.Range.Font.Name = bodyFontName
+    para.Range.Font.Size = settings.bodyFontSize
+    para.Range.Font.NameAscii = 'Times New Roman'
+    para.Range.Font.NameOther = 'Times New Roman'
+    para.LineSpacingRule = 4
     para.LineSpacing = settings.lineSpacing
-    para.CharacterUnitFirstLineIndent = 2  // 首行缩进2字符
-    para.Alignment = 3  // wdAlignParagraphJustify = 3 两端对齐
+    para.CharacterUnitFirstLineIndent = 2
+    para.Alignment = 3
   }
 }
 
-//判断文本是否像公文大标题行
-//标题特征：简短（不超过一行字数）、不以结构化标题序号开头、不以日期开头、不以冒号结尾
 function isTitleLike(text) {
   if (!text || text.length < 2) return false
-  //标题一般不超过22个字（二号字一行约22字），超过一行字数的肯定不是标题
-  if (text.length > 22) return false
-  //不以结构化标题序号开头
+  if (/^附件\d*/.test(text)) return false
+  if (/^附\s*件\d*/.test(text)) return false
   const h1Pattern = /^[一二三四五六七八九十]+、/
   const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
   const h3Pattern = /^\d+\./
   const h4Pattern = /^[（\(]\d+[）\)]/
   if (h1Pattern.test(text) || h2Pattern.test(text) || h3Pattern.test(text) || h4Pattern.test(text)) return false
-  //不以日期开头
   if (/^\d{4}年/.test(text)) return false
-  //不以冒号结尾（称呼/主送机关通常以冒号结尾）
   if (/[：:]$/.test(text)) return false
-  //包含句号的不是标题（标题一般不用句号）
   if (/[。！？；]/.test(text)) return false
-  //排除讲话稿发言人格式：
-  //1. 纯姓名2-4个汉字
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
-  //2. 单位+姓名（中间有空格）
   if (/.+\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
   return true
 }
@@ -601,16 +721,32 @@ function formatDocTitle(doc, settings) {
   const h3Pattern = /^\d+\./
   const h4Pattern = /^[（\(]\d+[）\)]/
 
-  //先找到第一个非空段落作为标题起点
+  const attachmentPattern = /^附\s*件\d*/
+
+  let attachmentLines = []
   let titleStart = -1
   for (let i = 1; i <= count; i++) {
     const text = paragraphs.Item(i).Range.Text.trim()
-    if (text) {
+    if (!text) continue
+    if (attachmentPattern.test(text)) {
+      attachmentLines.push(i)
+    } else {
       titleStart = i
       break
     }
   }
   if (titleStart === -1) return -1
+
+  if (attachmentLines.length > 0) {
+    const lastAttachmentIndex = attachmentLines[attachmentLines.length - 1]
+    if (lastAttachmentIndex + 1 === titleStart) {
+      const attachmentPara = paragraphs.Item(lastAttachmentIndex)
+      const endPos = attachmentPara.Range.End
+      const newPara = doc.Range(endPos, endPos)
+      newPara.InsertParagraphAfter()
+      titleStart++
+    }
+  }
 
   //检查第一段是否像标题（如果第一段不像标题，则不识别为标题区域）
   const firstText = paragraphs.Item(titleStart).Range.Text.trim()
@@ -630,6 +766,8 @@ function formatDocTitle(doc, settings) {
     if (!currText) break
     //上一行是空行也中断
     if (!prevText) break
+    //包含句号、感叹号、问号、分号的不是标题行（正文特征）
+    if (/[。！？；]/.test(currText)) break
     //不像标题则中断
     if (!isTitleLike(currText)) break
     titleEnd = i
@@ -782,16 +920,54 @@ function formatSpeechSignature(doc, titleEnd) {
   const paragraphs = doc.Paragraphs
   const count = paragraphs.Count
 
-  //日期格式：XXXX年XX月XX日 或 （XXXX年XX月XX日）
   const datePattern = /^[（\(]?\d{4}年\d{1,2}月\d{1,2}日[）\)]?$/
 
-  //从标题后开始，检查1-3个非空段落
   let checkedParas = []
-  for (let i = titleEnd + 1; i <= Math.min(titleEnd + 5, count); i++) {
+  
+  let titleEndWithOrg = titleEnd
+  
+  //检查署名机构：单独一行、不超过一行文字、与标题和正文都有空行
+  if (titleEnd + 2 <= count) {
+    const lineAfterTitle = paragraphs.Item(titleEnd + 1).Range.Text.trim()
+    const potentialOrgLine = paragraphs.Item(titleEnd + 2)
+    const orgText = potentialOrgLine.Range.Text.trim()
+    
+    //检查条件：标题后是空行，再下一行是非空短文本（可能是署名机构），再下一行是空行或正文开始
+    if (!lineAfterTitle && orgText && orgText.length > 0 && orgText.length <= 30) {
+      let hasBlankAfterOrg = false
+      if (titleEnd + 3 <= count) {
+        const lineAfterOrg = paragraphs.Item(titleEnd + 3).Range.Text.trim()
+        hasBlankAfterOrg = !lineAfterOrg
+        
+        if (!hasBlankAfterOrg) {
+          const nextText = paragraphs.Item(titleEnd + 3).Range.Text.trim()
+          if (nextText.length > 30 || /[。！？；]/.test(nextText)) {
+            hasBlankAfterOrg = true
+          }
+        }
+      }
+      
+      if (hasBlankAfterOrg) {
+        const orgFontName = getAvailableFont('仿宋_GB2312', '仿宋')
+        potentialOrgLine.Range.Font.Name = orgFontName
+        potentialOrgLine.Range.Font.Size = 16
+        potentialOrgLine.Range.Font.NameAscii = 'Times New Roman'
+        potentialOrgLine.Range.Font.NameOther = 'Times New Roman'
+        potentialOrgLine.CharacterUnitFirstLineIndent = 0
+        potentialOrgLine.FirstLineIndent = 0
+        potentialOrgLine.Alignment = 1
+        potentialOrgLine.LineSpacingRule = 4
+        potentialOrgLine.LineSpacing = 28.9
+        
+        titleEndWithOrg = titleEnd + 2
+      }
+    }
+  }
+
+  for (let i = titleEndWithOrg + 1; i <= Math.min(titleEndWithOrg + 5, count); i++) {
     const para = paragraphs.Item(i)
     const text = para.Range.Text.trim()
     if (!text) continue
-    //遇到非落款文本则停止
     if (!isSpeechSignature(text)) break
     checkedParas.push({ index: i, para: para, text: text })
     if (checkedParas.length >= 3) break
@@ -799,15 +975,13 @@ function formatSpeechSignature(doc, titleEnd) {
 
   if (checkedParas.length === 0) return
 
-  //确保标题与第一个落款之间有一个空行
+  //确保标题/署名机构与第一个落款之间有一个空行
   const firstSignatureIndex = checkedParas[0].index
-  if (firstSignatureIndex === titleEnd + 1) {
-    //标题后没有空行，插入一个空行
-    const titlePara = paragraphs.Item(titleEnd)
+  if (firstSignatureIndex === titleEndWithOrg + 1) {
+    const titlePara = paragraphs.Item(titleEndWithOrg)
     const titleEndPos = titlePara.Range.End
     const newPara = doc.Range(titleEndPos, titleEndPos)
     newPara.InsertParagraphAfter()
-    //插入空行后，checkedParas的索引需要+1
     for (let k = 0; k < checkedParas.length; k++) {
       checkedParas[k].index += 1
     }
@@ -1102,6 +1276,31 @@ function OnGetVisible(control) {
 
 function OnGetLabel(control) {
   return ''
+}
+
+const CURRENT_VERSION = '1.0.1'
+const VERSION_URL = 'https://wpsautoformat.netlify.app/version.txt'
+
+async function checkForUpdates() {
+  try {
+    const response = await fetch(VERSION_URL)
+    if (!response.ok) {
+      throw new Error('网络请求失败')
+    }
+    const latestVersion = await response.text()
+    const cleanVersion = latestVersion.trim()
+    
+    if (cleanVersion !== CURRENT_VERSION) {
+      const result = window.confirm(`检测到新版本：${cleanVersion}\n当前版本：${CURRENT_VERSION}\n\n是否前往下载更新？`)
+      if (result) {
+        window.Application.Hyperlink(VERSION_URL)
+      }
+    } else {
+      alert(`当前已是最新版本：${CURRENT_VERSION}`)
+    }
+  } catch (error) {
+    alert('检查更新失败：' + error.message)
+  }
 }
 
 //这些函数是给wps客户端调用的

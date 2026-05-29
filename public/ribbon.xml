@@ -6,6 +6,7 @@
                     <button id="btnAutoFormat" label="一键排版" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnUndoFormat" label="一键恢复" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnFormatSettings" label="调整固定格式" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnAbout" label="关于" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
 				</group>
             </tab>

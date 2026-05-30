@@ -282,7 +282,7 @@ function autoFormatDocument() {
 
       formatAddressee(doc, titleEnd)
 
-      formatSignatureAndDate(doc)
+      formatSignatureAndDate(doc, titleEnd)
 
       formatAll(doc, settings, titleEnd)
 
@@ -1062,7 +1062,7 @@ function formatAddressee(doc, titleEnd) {
   }
 }
 
-function formatSignatureAndDate(doc) {
+function formatSignatureAndDate(doc, titleEnd) {
   const paragraphs = doc.Paragraphs
   const count = paragraphs.Count
 
@@ -1074,8 +1074,16 @@ function formatSignatureAndDate(doc) {
   let dateInfo = null
   let signatureInfos = []
 
+  //落款搜索的最低边界：标题区域+署名区域之后
+  //标题后紧跟的署名由formatSpeechSignature处理，formatSignatureAndDate不应触碰
+  let searchFloor = 1
+  if (titleEnd > 0) {
+    //标题后面可能有署名机构（1行）、空行（1行）、日期（1行），最多5行缓冲
+    searchFloor = titleEnd + 5
+  }
+
   //从后往前查找日期行
-  for (let i = count; i >= 1; i--) {
+  for (let i = count; i >= searchFloor; i--) {
     const para = paragraphs.Item(i)
     const text = para.Range.Text.trim()
 
@@ -1085,9 +1093,10 @@ function formatSignatureAndDate(doc) {
     if (datePattern.test(text)) {
       dateInfo = { index: i, para: para, text: text }
 
-      //查找日期上方的落款行（最多2行）
+      //查找日期上方的落款行（最多2行落款，搜索范围最多6行非空文本）
       let searchIndex = i - 1
-      while (searchIndex >= 1 && signatureInfos.length < 2) {
+      let nonEmptyCount = 0
+      while (searchIndex >= searchFloor && signatureInfos.length < 2 && nonEmptyCount < 6) {
         const prevPara = paragraphs.Item(searchIndex)
         const prevText = prevPara.Range.Text.trim()
 
@@ -1098,11 +1107,12 @@ function formatSignatureAndDate(doc) {
           continue
         }
 
-        //检查是否是落款（不含结构化标题格式和标题文本）
+        nonEmptyCount++
+
+        //检查是否是结构化标题格式（一级、二级标题不是落款）
         const h1Pattern = /^[一二三四五六七八九十]+、/
         const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
         if (h1Pattern.test(prevText) || h2Pattern.test(prevText)) break
-        if (isTitleLike(prevText)) break
 
         signatureInfos.push({ index: searchIndex, para: prevPara, text: prevText })
         searchIndex--

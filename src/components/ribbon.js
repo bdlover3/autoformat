@@ -694,7 +694,7 @@ function isTitleLike(text) {
   if (/[：:]$/.test(text)) return false
   if (/[。！？；]/.test(text)) return false
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
-  if (/.+\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
+  if (/^[\u4e00-\u9fa5]{2,8}\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return false
   return true
 }
 
@@ -703,8 +703,8 @@ function isSpeechSignature(text) {
   if (!text) return false
   //1. 纯姓名2-4个汉字
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
-  //2. 单位+姓名（中间有空格）
-  if (/.+\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
+  //2. 单位+姓名（中间有空格），前缀最多8字限制避免误判长标题
+  if (/^[\u4e00-\u9fa5]{2,8}\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
   //日期格式
   if (/^[（\(]?\d{4}年\d{1,2}月\d{1,2}日[）\)]?$/.test(text)) return true
   return false
@@ -1074,12 +1074,13 @@ function formatSignatureAndDate(doc, titleEnd) {
   let dateInfo = null
   let signatureInfos = []
 
-  //落款搜索的最低边界：标题区域+署名区域之后
-  //标题后紧跟的署名由formatSpeechSignature处理，formatSignatureAndDate不应触碰
+  //落款一定在文末，署名一定在文首：
+  //署名（标题后前几行）由formatSpeechSignature处理
+  //落款由formatSignatureAndDate处理，搜索范围限制在文档后半部分+标题区域之后
   let searchFloor = 1
   if (titleEnd > 0) {
-    //标题后面可能有署名机构（1行）、空行（1行）、日期（1行），最多5行缓冲
-    searchFloor = titleEnd + 5
+    //标题区域后最多5行缓冲，同时确保搜索范围在文档后半部分
+    searchFloor = Math.max(titleEnd + 5, Math.ceil(count / 2))
   }
 
   //从后往前查找日期行

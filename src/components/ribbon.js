@@ -1098,10 +1098,11 @@ function formatSignatureAndDate(doc) {
           continue
         }
 
-        //检查是否是落款（不含结构化标题格式）
+        //检查是否是落款（不含结构化标题格式和标题文本）
         const h1Pattern = /^[一二三四五六七八九十]+、/
         const h2Pattern = /^[（\(][一二三四五六七八九十]+[）\)]/
         if (h1Pattern.test(prevText) || h2Pattern.test(prevText)) break
+        if (isTitleLike(prevText)) break
 
         signatureInfos.push({ index: searchIndex, para: prevPara, text: prevText })
         searchIndex--

@@ -416,7 +416,7 @@
                         xmlReq.onerror();
                 }
             }
-            xmlReq.timeout = 5000;
+            xmlReq.timeout = 15000;
             var data = {
                 method: "get",
                 url: url,
@@ -570,7 +570,7 @@
 
         function LoadPublishAddons() {
             var addonList = document.getElementById("addonList");
-            var curList = [{"name":"autoformat","addonType":"wps","online":"false","multiUser":"false","url":"https://wpsautoformat.netlify.app/autoformat.7z","version":"1.0.0"}];
+            var curList = [{"name":"autoformat","addonType":"wps","online":"false","multiUser":"false","url":"https://wpsautoformat.netlify.app/autoformat.7z","version":"1.0.1"}];
             curList.forEach(function (element) {
                 var param = JSON.stringify(element).replace("\"", "\'");
                 UpdateElement(element, 'enable')

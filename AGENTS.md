@@ -19,34 +19,84 @@ WPS Office JS add-in (`wpsjs`) that one-click formats Chinese 公文 (official d
 - All other dialogs (settings `/dialog`, font warning `/fontwarning`) still use `Application.ShowDialog`. Only the format panel uses task-pane navigation.
 - `manifest.xml` is copied to the build via the `wpsjs/vite_plugins` `copyFile` plugin. Updating add-in name/description requires editing `manifest.xml` (root), not anything in `dist/`. The `<Form>` element must stay or the task pane disappears.
 
-## Formatting logic in `src/components/ribbon.js`
+## Module architecture
 
-This single file is ~1575 lines and the project's heart. Key invariants — break them and you get user-visible bugs:
+核心排版逻辑已从 ribbon.js 拆分到独立模块，ribbon.js 仅做调度：
 
-### btnAutoFormat 主流程
+```
+src/components/
+  ribbon.js              ← 调度层：按钮回调、设置读写、面板轮询
+  js/
+    rules.js             ← 纯声明式规则表（检测规格 + 格式化规格）
+    detect.js            ← 规则解释执行：检测特殊元素
+    format.js            ← 规则解释执行：格式化特殊元素
+    page.js              ← 页面设置：边距、页码、清除格式
+    docops.js            ← 文档操作：段落拆分、删除空行、标题换行
+    signature.js         ← 署名检测（独立按钮）
+    patterns.js          ← 正则模式、字符宽度测量、文本判断函数
+    util.js              ← WPS 工具函数（URL路径、路由哈希）
+    systemdemo.js        ← WPS SDK 模板代码
+    dialog.js            ← 设置对话框辅助
+```
 
-`clearAllFormatting` → `setupPage` → `detectElements(doc)` → `applyBodyFormat` (skips special paragraphs) → `applySpecialFormat` (types dispatch) → `boldEnumerations` → `openFormatPanel` (task pane).
+### 声明式规则体系 (`rules.js`)
 
-### Format panel（微调面板）
+`RULES` 数组定义了 12 种元素（含 body），每条规则包含：
 
-- `FormatPanel.vue` at route `/formatpanel`，通过 `Application.CreateTaskPane` 创建侧边面板（宽度 320px，DockPosition=0 右侧停靠）。
+| 字段 | 说明 |
+|------|------|
+| `type` | 类型标识（唯一键）：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/signature/sig/date |
+| `label` | 面板显示名 |
+| `priority` | 检测优先级（越小越先；body 无 priority） |
+| `detect` | 检测规格对象（由 detect.js 的 `matchDetect` 解释） |
+| `formatSpec` | 格式化规格对象（由 format.js 的 `applyFormatSpec` 解释） |
+| `special` | 特殊处理规格（headSequence/multiline/region/scanDirection 等） |
+
+**detect 规格 mode**：`pattern`（单正则）、`composite`（组合正则）、`isTitleLike`、`notTitleLike`、`isSpeechSignature`、`patternWithNegate`。支持 `minLength`/`maxLength` 长度约束和 `negateTitleLike`/`negateSpeechSig` 否定约束。
+
+**formatSpec 规格**：`fontKey`（fonts 映射键）、`fontSizeKey`（settings 键）、`alignment`（left/center/right/justify）、`firstIndent`（字符单位）、`bold`（布尔）。
+
+**导出函数**：`RULES`（规则数组）、`getSpecialRules()`（不含 body）、`getRuleByType(type)`、`getTypeLabelMap()`、`getHeadSequenceTypes()`。
+
+### 检测模块 (`detect.js`)
+
+`detectElements(doc)` 两阶段扫描：
+1. **头部顺序阶段**：按 `headSequence` 规则从文首依次匹配（attachment → docNumber → title → subtitle）
+2. **全文扫描阶段**：其余规则按 priority 遍历剩余位置
+
+核心函数：`matchDetect(text, spec)` 解释 detect 规格、`matchContinuation(text, contSpec)` 解释续行规格、`calcRegionRange(offsetSpec, ctx)` 解释区域约束。
+
+### 格式化模块 (`format.js`)
+
+核心策略（解决格式相互覆盖）：
+1. **全文先刷正文格式**（`applyBodyFormat`）— 不跳过任何段落
+2. **特殊元素用 start/end 精准覆盖**（`applySpecialFormat`）— `doc.Range(start, end-1)` 精确操作
+3. **sig+date 统一走 `applyFooterAlignment`**（字符宽度对齐）
+
+`applyFormatSpec(range, spec, settings, fonts)` 解释 formatSpec 规格。
+
+## btnAutoFormat 主流程
+
+`clearAllFormatting` → `setupPage` → `detectElements(doc)` → `applyBodyFormat`（全文统一）→ `applySpecialFormat`（精准覆盖）→ `boldEnumerations` → `openFormatPanel`（task pane）。
+
+## Format panel（微调面板）
+
+- `FormatPanel.vue` at route `/formatpanel`，通过 `Application.CreateTaskPane` 创建侧边面板（宽度 220px，DockPosition=0 右侧停靠）。
 - 面板与主窗口不共享 window，通过 `Application.PluginStorage` 传递数据：`__formatPanelData`（初始数据）、`__formatPanelAction`（指令：apply/cancel/close）、`__formatPanelEdits`（编辑后的元素 JSON）。
 - 主窗口每 500ms 轮询 `__formatPanelAction`。apply 时重新执行 `applyBodyFormat` + `applySpecialFormat` + `boldEnumerations`；cancel 时执行 `undoFormatDocument`；close 时仅关闭面板。
 - **防重复面板**：`openFormatPanel` 开头检查 `currentTaskPane`，若已存在先关闭旧面板并清理轮询定时器，再创建新面板。模块级变量 `currentTaskPane` 和 `currentPollTimer` 跟踪当前面板状态。
-- 11 type groups in order (文号/标题/小标题/署名/抬头/附件/h1/h2/h3/落款/日期).
+- 12 个元素类型：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/signature/sig/date。
 
-### 其他独立按钮
+## 其他独立按钮
 
 - `btnDetectSignature` / `btnRemoveBlankLines` / `btnSplitTitle` keep their original logic — they do NOT route through the element detection system.
 
+## 关键不变量
 
-### 其他关键不变量
-
-- `clearAllFormatting` must call `ListFormat.ConvertNumbersToText()` **before** `RemoveNumbers()` for every paragraph, or auto-numbered headings (e.g. "一、") lose their numerals.
-- Many WPS API calls throw on unrelated paragraphs; the file is full of `try { ... } catch (e) { }` swallows. This is intentional defensive code, not a smell — leave it (lint reports many `no-empty` errors, all pre-existing/expected).
-- When inserting/splitting paragraphs, iterate **backwards** (`for i = count; i >= 1; i--`) to avoid index drift. See `formatSubTitles`, `removeBlankLines`.
+- `clearAllFormatting` (page.js) must call `ListFormat.ConvertNumbersToText()` **before** `RemoveNumbers()` for every paragraph, or auto-numbered headings (e.g. "一、") lose their numerals.
+- Many WPS API calls throw on unrelated paragraphs; the code is full of `try { ... } catch (e) { }` swallows. This is intentional defensive code, not a smell — leave it. `no-empty` is disabled in `.eslintrc.cjs`.
+- When inserting/splitting paragraphs, iterate **backwards** (`for i = count; i >= 1; i--`) to avoid index drift. See `removeBlankLines` in docops.js.
 - `splitParagraphAtChar(doc, paraIndex, cutIndex)` is the canonical helper for "cut a paragraph in half"; do not re-implement with `Range.InsertBreak` (loses the leading character of the tail in some WPS builds).
-- Settings are persisted to `%AppData%\WPSAutoFormat\settings.json` via `Application.FileSystem`, with `Application.PluginStorage` as fallback. Both paths must keep working.
 
 ## Ribbon button registry
 
@@ -76,7 +126,7 @@ This single file is ~1575 lines and the project's heart. Key invariants — brea
 - **允许**：用回车/换行调整段落结构（`splitParagraphAtChar` 用 `\r` 拆分段落 ✅）
 - **允许**：用 `LeftIndent`/`RightIndent`/`Alignment` 等段落格式属性实现缩进/对齐 ✅
 - **允许**：`clearAllFormatting` 中 `ConvertNumbersToText()` 保留自动编号为文字 ✅
-- **允许**：`clearAllHeadersFooters`/`setupPageNumber` 清空/重建页眉页脚 ✅
+- **允许**：`setupPageNumber` 清空/重建页脚页码 ✅
 - **允许**：`applyFooterAlignment` 中用前导空格调整落款/日期对齐（`rng.Text = spaces + cleanText` ✅）——`LeftIndent` 无法表达半字符偏移，空格对齐是唯一可靠方式
 - **唯一例外**：`removeBlankLines()` 可以删除空段落（这是该按钮的明确功能）
 - 违反此规定的代码必须立即修复

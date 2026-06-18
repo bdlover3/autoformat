@@ -303,6 +303,7 @@ let specialElements = []
 //模块级状态：当前打开的微调面板 taskPane 和轮询计时器
 let currentTaskPane = null
 let currentPollTimer = null
+let currentFormatDoc = null  //面板关联的文档引用，用于检测文档切换
 
 function autoFormatDocument() {
   const doc = window.Application.ActiveDocument
@@ -345,6 +346,9 @@ function autoFormatDocument() {
 
 function openFormatPanel(doc, settings) {
   try {
+    //记录面板关联的文档
+    currentFormatDoc = doc
+
     //销毁旧面板（彻底，防止重复创建）
     if (currentTaskPane) {
       try { currentTaskPane.Visible = false } catch (e) { }
@@ -383,6 +387,18 @@ function openFormatPanel(doc, settings) {
     //轮询 TaskPane 通过 PluginStorage 发来的指令
     const pollPanelAction = () => {
       try {
+        //文档切换检测：活动文档与面板关联文档不同时，关闭面板
+        const activeDoc = window.Application.ActiveDocument
+        if (activeDoc !== currentFormatDoc) {
+          clearInterval(currentPollTimer)
+          currentPollTimer = null
+          currentFormatDoc = null
+          try { currentTaskPane.Visible = false } catch (e) { }
+          try { currentTaskPane.Delete() } catch (e) { }
+          currentTaskPane = null
+          return
+        }
+
         const storage = window.Application.PluginStorage
         const action = storage.getItem('__formatPanelAction')
         if (!action) return

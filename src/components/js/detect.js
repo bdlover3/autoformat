@@ -125,10 +125,15 @@ function buildBaseTxt(doc) {
         const full = para.Range.Text.replace(/[\r\n]+$/, '')
         const trimmed = full.trim()
         if (trimmed) {
+          //计算 trimmed 文本在段落中的实际起止位置（跳过前导空格）
+          const leadingSpaces = full.length - full.trimStart().length
+          const trailingSpaces = full.length - full.trimEnd().length
+          const paraStart = para.Range.Start + leadingSpaces
+          const paraEnd = para.Range.End - trailingSpaces
           result.push({
             text: trimmed,
-            start: para.Range.Start,
-            end: para.Range.End
+            start: paraStart,
+            end: paraEnd
           })
         }
       } catch (e) { }

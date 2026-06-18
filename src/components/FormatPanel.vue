@@ -19,6 +19,7 @@
               :key="item.start"
               class="element-item"
               :class="'item-' + item.type"
+              @click="navigateToItem(item)"
             >
               <div class="element-row">
                 <div
@@ -28,9 +29,12 @@
                   :data-idx="item.start"
                   @input="onTextChanged($event, item)"
                   @blur="onBlur"
-                  @mouseup="onTextSelect($event, item)"
                 >{{ item.text }}</div>
-                <span class="type-badge" :class="'badge-' + item.type">{{ typeLabel(item.type) }}</span>
+                <span
+                  class="type-badge"
+                  :class="'badge-' + item.type"
+                  @click.stop="onBadgeClick($event, item)"
+                >{{ typeLabel(item.type) }}</span>
               </div>
             </div>
           </div>
@@ -50,7 +54,7 @@
     >
       <div class="context-header">调整为：</div>
       <div
-        v-for="t in allTypes"
+        v-for="t in contextMenu.availableTypes"
         :key="t.key"
         class="context-item"
         :class="{ active: contextMenu.currentType === t.key }"
@@ -69,18 +73,18 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
 
 const TYPE_LABELS = {
   docNumber: '文号',
   title: '标题',
-  subtitle: '小标题',
+  subtitle: '副标',
   signature: '署名',
   addressee: '抬头',
   attachment: '附件',
-  h1: '一级标题',
-  h2: '二级标题',
-  h3: '三级标题',
+  h1: '一标',
+  h2: '二标',
+  h3: '三标',
   sig: '落款',
   date: '日期'
 }
@@ -88,16 +92,27 @@ const TYPE_LABELS = {
 const ALL_TYPES = [
   { key: 'docNumber', label: '文号' },
   { key: 'title', label: '标题' },
-  { key: 'subtitle', label: '小标题' },
+  { key: 'subtitle', label: '副标' },
   { key: 'addressee', label: '抬头' },
   { key: 'attachment', label: '附件' },
-  { key: 'h1', label: '一级标题' },
-  { key: 'h2', label: '二级标题' },
-  { key: 'h3', label: '三级标题' },
+  { key: 'h1', label: '一标' },
+  { key: 'h2', label: '二标' },
+  { key: 'h3', label: '三标' },
   { key: 'signature', label: '署名' },
   { key: 'sig', label: '落款' },
   { key: 'date', label: '日期' }
 ]
+
+//落款/日期只能由检测自动识别，面板仅允许 sig↔date 互转，不能从其他类型转入
+const FOOTER_TYPES = ['sig', 'date']
+const NON_FOOTER_TYPES = ALL_TYPES.map(t => t.key).filter(k => !FOOTER_TYPES.includes(k))
+
+function getAvailableTypes(currentType) {
+  if (FOOTER_TYPES.includes(currentType)) {
+    return ALL_TYPES.filter(t => FOOTER_TYPES.includes(t.key))
+  }
+  return ALL_TYPES.filter(t => NON_FOOTER_TYPES.includes(t.key))
+}
 
 const GROUP_ORDER = [
   { key: 'head', label: '公文头部', types: ['docNumber', 'title', 'subtitle', 'addressee', 'attachment'] },
@@ -115,10 +130,31 @@ export default {
       x: 0,
       y: 0,
       itemStart: -1,
-      currentType: ''
+      currentType: '',
+      availableTypes: []
     })
     let debounceTimer = null
     let dirty = false
+
+    //BroadcastChannel 用于面板→主窗口即时通讯（替代 PluginStorage 轮询）
+    let bc = null
+    try {
+      bc = new BroadcastChannel('wps_format_panel')
+    } catch (e) {
+      console.warn('[FormatPanel] BroadcastChannel 不可用，面板通讯将失效', e)
+    }
+
+    //监听主窗口发来的数据更新（位置偏移等）
+    if (bc) {
+      bc.onmessage = (event) => {
+        try {
+          const msg = event.data
+          if (msg && msg.type === 'updateElements' && Array.isArray(msg.elements)) {
+            elements.value = JSON.parse(JSON.stringify(msg.elements))
+          }
+        } catch (e) { }
+      }
+    }
 
     onMounted(() => {
       try {
@@ -135,6 +171,14 @@ export default {
       }
       //点击面板外区域关闭右键菜单
       document.addEventListener('mousedown', onDocMouseDown)
+    })
+
+    onUnmounted(() => {
+      if (bc) {
+        bc.close()
+        bc = null
+      }
+      document.removeEventListener('mousedown', onDocMouseDown)
     })
 
     const sortedElements = computed(() => {
@@ -160,19 +204,35 @@ export default {
       collapsedGroups[key] = !collapsedGroups[key]
     }
 
-    //选中文字后弹出菜单
-    function onTextSelect(event, item) {
-      const sel = window.getSelection()
-      const selectedText = sel ? sel.toString().trim() : ''
-      if (!selectedText) return
-
+    //点击标签弹出类型选择菜单（向左侧弹出）
+    function onBadgeClick(event, item) {
       const rect = event.target.getBoundingClientRect()
       const panelRect = event.target.closest('.panel').getBoundingClientRect()
+      //菜单宽度约 120px，从标签右边缘向左展开，避免溢出面板右侧
+      const menuWidth = 130
+      let menuX = rect.right - panelRect.left - menuWidth
+      if (menuX < 0) menuX = 0
       contextMenu.visible = true
-      contextMenu.x = rect.left - panelRect.left
+      contextMenu.x = menuX
       contextMenu.y = rect.bottom - panelRect.top + 4
       contextMenu.itemStart = item.start
       contextMenu.currentType = item.type
+      //根据当前类型约束可选项：落款区只能互转落款区
+      contextMenu.availableTypes = getAvailableTypes(item.type)
+    }
+
+    //点击元素跳转到正文对应位置（直接操作文档，选中整段以触发滚动）
+    function navigateToItem(item) {
+      try {
+        const doc = window.Application.ActiveDocument
+        if (doc && typeof item.start === 'number' && typeof item.end === 'number') {
+          //选中整段文字，WPS 会自动滚动到选中位置
+          const rng = doc.Range(item.start, item.end - 1)
+          rng.Select()
+        }
+      } catch (e) {
+        console.warn('[FormatPanel] navigateToItem failed:', e)
+      }
     }
 
     //点击面板空白处关闭菜单
@@ -191,10 +251,19 @@ export default {
     //修改元素类型
     function changeType(itemStart, newType) {
       const el = elements.value.find(e => e.start === itemStart)
-      if (el) {
-        el.type = newType
-        dirty = true
-        flushDebounce()
+      if (!el) {
+        console.warn('[FormatPanel] changeType: element not found, itemStart=', itemStart)
+        return
+      }
+      console.log('[FormatPanel] changeType:', el.type, '->', newType, 'itemStart=', itemStart)
+      el.type = newType
+      //通过 BroadcastChannel 即时通知主窗口
+      try {
+        if (bc) {
+          bc.postMessage({ type: 'apply', elements: JSON.parse(JSON.stringify(elements.value)) })
+        }
+      } catch (e) {
+        console.warn('[FormatPanel] changeType send failed:', e)
       }
       contextMenu.visible = false
     }
@@ -212,9 +281,9 @@ export default {
     function applyNow() {
       dirty = false
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__formatPanelEdits', JSON.stringify(JSON.parse(JSON.stringify(elements.value))))
-        storage.setItem('__formatPanelAction', 'apply')
+        if (bc) {
+          bc.postMessage({ type: 'apply', elements: JSON.parse(JSON.stringify(elements.value)) })
+        }
       } catch (e) {
         console.warn('[FormatPanel] applyNow failed:', e)
       }
@@ -235,8 +304,9 @@ export default {
     function closePanel() {
       flushDebounce()
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__formatPanelAction', 'close')
+        if (bc) {
+          bc.postMessage({ type: 'close' })
+        }
       } catch (e) { }
     }
 
@@ -244,8 +314,9 @@ export default {
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = null
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__formatPanelAction', 'cancel')
+        if (bc) {
+          bc.postMessage({ type: 'cancel' })
+        }
       } catch (e) { }
     }
 
@@ -255,14 +326,14 @@ export default {
       groupedElements,
       collapsedGroups,
       contextMenu,
-      allTypes: ALL_TYPES,
       typeLabel,
       toggleGroup,
       onTextChanged,
       onBlur,
-      onTextSelect,
+      onBadgeClick,
       onPanelClick,
       changeType,
+      navigateToItem,
       closePanel,
       cancel
     }
@@ -424,6 +495,11 @@ export default {
   margin-top: 4px;
   color: #fff;
   font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.type-badge:hover {
+  filter: brightness(1.15);
 }
 .badge-docNumber  { background: #4caf50; }
 .badge-title      { background: #2196f3; }

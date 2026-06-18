@@ -14,7 +14,7 @@ export const h1Pattern = /^[一二三四五六七八九十]+、/
 export const h2Pattern = /^[（(][一二三四五六七八九十]+[）)]/
 export const h3Pattern = /^\d+\./
 export const h4Pattern = /^[（(]\d+[）)]/
-export const datePattern = /^\d{4}年\d{1,2}月\d{1,2}日/
+export const datePattern = /^\d{4}([年.-]\d{1,2}([月.-]\d{1,2}日?)?|年\d{1,2}月(\d{1,2}日)?)/
 export const attachmentPattern = /^附\s*件\d*/
 export const endSymbolPattern = /[。！？；]/
 
@@ -25,7 +25,7 @@ export function isSpeechSignature(text) {
   if (!text) return false
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
   if (/^[\u4e00-\u9fa5]{2,8}\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
-  if (/^[（(]?\d{4}年\d{1,2}月\d{1,2}日[）)]?$/.test(text)) return true
+  if (datePattern.test(text)) return true
   return false
 }
 

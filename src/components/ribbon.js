@@ -300,10 +300,90 @@ function OnAction(control) {
 //模块级状态：当前文档检测到的特殊段落
 let specialElements = []
 
-//模块级状态：当前打开的微调面板 taskPane 和轮询计时器
+//模块级状态：当前打开的微调面板 taskPane 和健康检查计时器
 let currentTaskPane = null
-let currentPollTimer = null
+let currentHealthTimer = null  //仅检测文档切换/关闭
 let currentFormatDocName = ''  //面板关联的文档 FullName，用于检测文档切换
+let currentFormatDocCaption = ''  //面板关联的窗口 Caption，用于检测标签切换
+let panelBroadcastChannel = null  //BroadcastChannel 用于接收面板即时消息
+
+//关闭面板的统一方法
+function closeFormatPanel() {
+  if (currentHealthTimer) {
+    clearInterval(currentHealthTimer)
+    currentHealthTimer = null
+  }
+  if (panelBroadcastChannel) {
+    panelBroadcastChannel.close()
+    panelBroadcastChannel = null
+  }
+  currentFormatDocName = ''
+  currentFormatDocCaption = ''
+  if (currentTaskPane) {
+    try { currentTaskPane.Visible = false } catch (e) { }
+    try { currentTaskPane.Delete() } catch (e) { }
+    currentTaskPane = null
+  }
+}
+
+//处理面板消息（BroadcastChannel 即时接收，替代 500ms 轮询）
+function handlePanelMessage(msg) {
+  if (!msg || !msg.type) return
+
+  console.log('[handlePanelMessage] msg.type =', msg.type)
+
+  if (msg.type === 'apply') {
+    const newElements = msg.elements
+    if (!Array.isArray(newElements)) return
+
+    const doc = window.Application.ActiveDocument
+    if (!doc) return
+    const settings = getSettings()
+
+    let panelUndo = null
+    try {
+      panelUndo = window.Application.UndoRecord
+      panelUndo.StartCustomRecord('排版微调')
+    } catch (e) { }
+    try {
+      const merged = mergePanelEdits(specialElements, newElements)
+      specialElements = merged
+      applyBodyFormat(doc, settings, getAvailableFont)
+      const posUpdates = applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+      boldEnumerations(doc)
+
+      //落款/日期对齐写回后，同步 start/end 位置
+      if (Array.isArray(posUpdates) && posUpdates.length > 0) {
+        for (const upd of posUpdates) {
+          const el = specialElements.find(e => e.start === upd.oldStart)
+          if (el) {
+            el.start = upd.newStart
+            el.end = upd.newEnd
+          }
+        }
+      }
+      //无论位置是否变化，都将最新数据推回面板（类型切换后格式/位置都可能变化）
+      try {
+        if (panelBroadcastChannel) {
+          panelBroadcastChannel.postMessage({
+            type: 'updateElements',
+            elements: JSON.parse(JSON.stringify(specialElements))
+          })
+        }
+      } catch (e2) { }
+    } catch (e) {
+      console.warn('[handlePanelMessage] apply failed:', e)
+    }
+    if (panelUndo) {
+      try { panelUndo.EndCustomRecord() } catch (e2) { }
+    }
+  } else if (msg.type === 'cancel') {
+    closeFormatPanel()
+    undoFormatDocument()
+  } else if (msg.type === 'close') {
+    closeFormatPanel()
+  }
+}
 
 function autoFormatDocument() {
   const doc = window.Application.ActiveDocument
@@ -328,8 +408,19 @@ function autoFormatDocument() {
 
     specialElements = detectElements(doc)
     applyBodyFormat(doc, settings, getAvailableFont)
-    applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+    const posUpdates = applySpecialFormat(doc, settings, specialElements, getAvailableFont)
     boldEnumerations(doc)
+
+    //落款/日期对齐后同步位置
+    if (Array.isArray(posUpdates) && posUpdates.length > 0) {
+      for (const upd of posUpdates) {
+        const el = specialElements.find(e => e.start === upd.oldStart)
+        if (el) {
+          el.start = upd.newStart
+          el.end = upd.newEnd
+        }
+      }
+    }
 
     checkFontsOncePerSession()
     window.lastFormatTime = new Date().getTime()
@@ -341,129 +432,87 @@ function autoFormatDocument() {
   }
 
   //打开微调面板
-  openFormatPanel(doc, settings)
+  openFormatPanel(doc)
 }
 
-function openFormatPanel(doc, settings) {
+function openFormatPanel(doc) {
   try {
     //记录面板关联的文档
     try { currentFormatDocName = doc.FullName } catch (e) { currentFormatDocName = '' }
+    try { currentFormatDocCaption = window.Application.ActiveWindow.Caption } catch (e) { currentFormatDocCaption = '' }
 
-    //销毁旧面板（彻底，防止重复创建）
+    //销毁旧面板（防止重复创建）
     if (currentTaskPane) {
       try { currentTaskPane.Visible = false } catch (e) { }
       try { currentTaskPane.Delete() } catch (e) { }
       currentTaskPane = null
     }
-    if (currentPollTimer) {
-      clearInterval(currentPollTimer)
-      currentPollTimer = null
+    if (currentHealthTimer) {
+      clearInterval(currentHealthTimer)
+      currentHealthTimer = null
+    }
+    if (panelBroadcastChannel) {
+      panelBroadcastChannel.close()
+      panelBroadcastChannel = null
     }
 
-    const bodyPreview = []
-    try {
-      const paragraphs = doc.Paragraphs
-      const limit = Math.min(paragraphs.Count, 30)
-      for (let i = 1; i <= limit; i++) {
-        const t = paragraphs.Item(i).Range.Text.replace(/[\r\n]+$/, '').trim()
-        if (t) bodyPreview.push(t)
-      }
-    } catch (e) { }
-
-    //通过 PluginStorage 传递数据给 TaskPane
+    //通过 PluginStorage 传递初始数据给 TaskPane（面板 onMounted 读取）
     try {
       const storage = window.Application.PluginStorage
       storage.setItem('__formatPanelData', JSON.stringify({
-        elements: JSON.parse(JSON.stringify(specialElements)),
-        bodyPreview: bodyPreview,
-        settings: JSON.parse(JSON.stringify(settings))
+        elements: JSON.parse(JSON.stringify(specialElements))
       }))
-      storage.setItem('__formatPanelAction', '')
-      storage.setItem('__formatPanelEdits', '')
     } catch (e) {
       console.warn('[openFormatPanel] PluginStorage write failed:', e)
     }
 
-    //轮询 TaskPane 通过 PluginStorage 发来的指令
-    const pollPanelAction = () => {
+    //创建 BroadcastChannel 接收面板即时消息
+    try {
+      panelBroadcastChannel = new BroadcastChannel('wps_format_panel')
+      panelBroadcastChannel.onmessage = (event) => {
+        handlePanelMessage(event.data)
+      }
+    } catch (e) {
+      console.warn('[openFormatPanel] BroadcastChannel 不可用，面板通讯将失效', e)
+    }
+
+    //健康检查：仅检测文档切换/关闭（2s 一次，比 500ms 轮询轻量得多）
+    currentHealthTimer = setInterval(() => {
       try {
-        //文档切换检测：用 FullName 比较而非对象引用（COM proxy 每次可能不同）
+        let docCount = 0
+        try { docCount = window.Application.Documents.Count } catch (e) { }
+        if (docCount === 0) {
+          closeFormatPanel()
+          return
+        }
         let activeDocName = ''
         try { activeDocName = window.Application.ActiveDocument.FullName } catch (e) { }
         if (activeDocName !== currentFormatDocName) {
-          clearInterval(currentPollTimer)
-          currentPollTimer = null
-          currentFormatDocName = ''
-          try { currentTaskPane.Visible = false } catch (e) { }
-          try { currentTaskPane.Delete() } catch (e) { }
-          currentTaskPane = null
+          closeFormatPanel()
           return
         }
-
-        const storage = window.Application.PluginStorage
-        const action = storage.getItem('__formatPanelAction')
-        if (!action) return
-
-        if (action === 'apply') {
-          storage.setItem('__formatPanelAction', '')
-          const editsRaw = storage.getItem('__formatPanelEdits')
-          if (editsRaw) {
-            try {
-              const newElements = JSON.parse(editsRaw)
-              storage.setItem('__formatPanelEdits', '')
-              let panelUndo = null
-              try {
-                panelUndo = window.Application.UndoRecord
-                panelUndo.StartCustomRecord('排版微调')
-              } catch (e) { }
-              try {
-                const merged = mergePanelEdits(specialElements, newElements)
-                specialElements = merged
-                applyBodyFormat(doc, settings, getAvailableFont)
-                applySpecialFormat(doc, settings, specialElements, getAvailableFont)
-                boldEnumerations(doc)
-              } catch (e) { }
-              if (panelUndo) {
-                try { panelUndo.EndCustomRecord() } catch (e2) { }
-              }
-            } catch (e) { }
-          }
-        } else if (action === 'cancel') {
-          storage.setItem('__formatPanelAction', '')
-          clearInterval(currentPollTimer)
-          currentPollTimer = null
-          try { currentTaskPane.Visible = false } catch (e) { }
-          try { currentTaskPane.Delete() } catch (e) { }
-          currentTaskPane = null
-          undoFormatDocument()
-          return
-        } else if (action === 'close') {
-          storage.setItem('__formatPanelAction', '')
-          clearInterval(currentPollTimer)
-          currentPollTimer = null
-          try { currentTaskPane.Visible = false } catch (e) { }
-          try { currentTaskPane.Delete() } catch (e) { }
-          currentTaskPane = null
+        let activeCaption = ''
+        try { activeCaption = window.Application.ActiveWindow.Caption } catch (e) { }
+        if (activeCaption && currentFormatDocCaption && activeCaption !== currentFormatDocCaption) {
+          closeFormatPanel()
           return
         }
       } catch (e) { }
-    }
-    currentPollTimer = setInterval(pollPanelAction, 500)
+    }, 2000)
 
-    //创建侧边任务窗格显示微调面板
+    //创建左侧停靠任务窗格显示微调面板
     const panelUrl = Util.GetUrlPath() + Util.GetRouterHash() + '/formatpanel'
     console.log('[openFormatPanel] panelUrl =', panelUrl)
     const taskPane = window.Application.CreateTaskPane(panelUrl, '排版微调')
     console.log('[openFormatPanel] taskPane =', taskPane)
     if (taskPane) {
       currentTaskPane = taskPane
+      //左侧停靠模式（DockPosition=0 = msoCTPDockPositionLeft）
       taskPane.DockPosition = 0
-      try { taskPane.Width = 220 } catch (e) { }
       taskPane.Visible = true
     } else {
       console.warn('[openFormatPanel] CreateTaskPane returned undefined')
-      clearInterval(currentPollTimer)
-      currentPollTimer = null
+      closeFormatPanel()
     }
   } catch (e) {
   }

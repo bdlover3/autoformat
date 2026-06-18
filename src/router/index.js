@@ -1,5 +1,4 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-//import HomeView from '../views/HomeView.vue'
 
 const router = createRouter({
   history:  createWebHashHistory(''),
@@ -15,9 +14,19 @@ const router = createRouter({
       component: () => import('../components/Dialog.vue')
     },
     {
+      path: '/fontwarning',
+      name: '字体提示',
+      component: () => import('../components/FontWarning.vue')
+    },
+    {
       path: '/taskpane',
       name: '任务窗格',
       component: () => import('../components/TaskPane.vue')
+    },
+    {
+      path: '/formatpanel',
+      name: '排版微调',
+      component: () => import('../components/FormatPanel.vue')
     }
   ]
 })

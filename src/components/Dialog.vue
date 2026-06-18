@@ -214,12 +214,19 @@
       <div class="form-row">
         <span class="form-hint">（启用后将不再提示字体缺失信息）</span>
       </div>
+      <div class="form-row">
+        <label>标题后自动换行</label>
+        <input type="checkbox" v-model="settings.autoSplitSubtitle" />
+      </div>
+      <div class="form-row">
+        <span class="form-hint">（开启后排版时会在一二三级标题句号后自动插入换行，将正文移到下一段。默认关闭）</span>
+      </div>
     </div>
 
     <div class="section footer-info">
       <div class="version-info">
         <span class="version-label">版本：</span>
-        <span class="version-text">1.0.0</span>
+        <span class="version-text">1.1.0</span>
       </div>
       <div class="source-info">
         <span class="source-label">开源地址：</span>
@@ -296,7 +303,8 @@ export default {
       enablePageNumber: true,
       pageNumberPosition: 'center',
       clearFormatting: true,
-      disableFontWarning: false
+      disableFontWarning: false,
+      autoSplitSubtitle: false
     })
 
     const fontList = reactive([])

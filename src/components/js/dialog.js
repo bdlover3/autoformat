@@ -138,7 +138,8 @@ function resetSettings(settings) {
           enablePageNumber: true,
           pageNumberPosition: 'center',
           clearFormatting: true,
-          disableFontWarning: false
+          disableFontWarning: false,
+          autoSplitSubtitle: false
         }
     }
     Object.keys(defaults).forEach(key => {

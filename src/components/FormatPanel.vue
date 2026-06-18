@@ -1,11 +1,5 @@
 <template>
   <div class="panel" @click="onPanelClick">
-    <div class="panel-header">
-      <span class="panel-title">排版微调</span>
-      <span class="close-btn" @click="closePanel">
-        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
-      </span>
-    </div>
 
     <div class="panel-body">
       <template v-if="sortedElements.length > 0">
@@ -293,36 +287,6 @@ export default {
   overflow: hidden;
   position: relative;
   -webkit-font-smoothing: antialiased;
-}
-
-/* === 顶栏 === */
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid #e8e8e8;
-  flex-shrink: 0;
-  background: #fafafa;
-}
-.panel-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #222;
-}
-.close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  color: #999;
-  cursor: pointer;
-  border-radius: 2px;
-}
-.close-btn:hover {
-  background: #e5e5e5;
-  color: #555;
 }
 
 /* === 内容区 === */

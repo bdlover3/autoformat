@@ -1,0 +1,6 @@
+node_modules/ 
+dist/ 
+wps-addon-build/ 
+.DS_Store 
+*.local 
+.atomcode/

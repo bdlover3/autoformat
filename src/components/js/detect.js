@@ -43,6 +43,7 @@ function matchDetect(text, spec) {
 
   // 简单正则匹配
   if (mode === 'isTitleLike') return isTitleLike(text)
+  if (mode === 'notTitleLike') return !isTitleLike(text)
   if (mode === 'isSpeechSignature') return isSpeechSignature(text)
 
   // 组合正则（如 h3 匹配 h3Pattern || h4Pattern）
@@ -256,9 +257,7 @@ export function detectElements(doc) {
       const firstIdx = firstAvailable(startFrom)
       if (firstIdx < 0) continue
       const firstText = textMap.get(firstIdx).text
-      // 标题特殊：排除已知模式 + 长度≥2
-      if (rule.type === 'title' && (isTitleLike(firstText) === false || firstText.length < 2)) continue
-      if (rule.type !== 'title' && !matchDetect(firstText, detectSpec)) continue
+      if (!matchDetect(firstText, detectSpec)) continue
 
       claim(firstIdx, rule.type)
       lastHeadIdx = firstIdx

@@ -8,8 +8,17 @@
 //   3. sig+date 统一走 applyFooterAlignment（字符宽度对齐）
 //==============================================================
 
-import { getRuleByType } from './rules.js'
+import { RULES } from './rules.js'
 import { measureWidth } from './patterns.js'
+
+//--- 对齐方式常量 ---
+
+const ALIGN_MAP = {
+  left: 0,
+  center: 1,
+  right: 2,
+  justify: 3
+}
 
 //--- 格式化基础工具 ---
 
@@ -25,6 +34,42 @@ function setRangeBaseFont(range, fontName, lineSpacing) {
 }
 
 /**
+ * 根据声明式 formatSpec 格式化一个 Range
+ * @param {Object} range WPS Range 对象
+ * @param {Object} spec 规则的 formatSpec
+ * @param {Object} settings 用户设置
+ * @param {Object} fonts 可用字体映射
+ */
+function applyFormatSpec(range, spec, settings, fonts) {
+  if (!spec) return
+
+  // 字体
+  const fontName = fonts[spec.fontKey] || fonts.bodyFontName
+  setRangeBaseFont(range, fontName, settings.lineSpacing)
+
+  // 字号
+  if (spec.fontSizeKey && settings[spec.fontSizeKey] != null) {
+    range.Font.Size = settings[spec.fontSizeKey]
+  }
+
+  // 加粗
+  if (spec.bold) {
+    range.Font.Bold = true
+  }
+
+  // 对齐
+  if (spec.alignment && ALIGN_MAP[spec.alignment] != null) {
+    range.ParagraphFormat.Alignment = ALIGN_MAP[spec.alignment]
+  }
+
+  // 首行缩进（字符单位）
+  if (spec.firstIndent != null) {
+    range.ParagraphFormat.CharacterUnitFirstLineIndent = spec.firstIndent
+    range.ParagraphFormat.FirstLineIndent = 0
+  }
+}
+
+/**
  * 全文先刷正文格式
  * 不跳过任何段落，一次性统一设置
  * @param {Object} doc
@@ -32,15 +77,13 @@ function setRangeBaseFont(range, fontName, lineSpacing) {
  * @param {Function} getAvailableFont
  */
 export function applyBodyFormat(doc, settings, getAvailableFont) {
-  const bodyRule = getRuleByType('body')
-  if (!bodyRule || typeof bodyRule.format !== 'function') return
+  const bodyRule = RULES.find(r => r.type === 'body')
+  if (!bodyRule || !bodyRule.formatSpec) return
 
-  const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
-  const fonts = { bodyFontName }
-
+  const fonts = { bodyFontName: getAvailableFont(settings.bodyFont, '仿宋') }
   const fullRange = doc.Content
   try {
-    bodyRule.format(fullRange, settings, fonts)
+    applyFormatSpec(fullRange, bodyRule.formatSpec, settings, fonts)
   } catch (e) { }
 }
 
@@ -77,11 +120,11 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
     }
 
     // 从规则表查找格式化规格
-    const rule = getRuleByType(el.type)
-    if (rule && typeof rule.format === 'function') {
+    const rule = RULES.find(r => r.type === el.type)
+    if (rule && rule.formatSpec) {
       try {
         const range = doc.Range(el.start, el.end - 1)
-        rule.format(range, settings, fonts)
+        applyFormatSpec(range, rule.formatSpec, settings, fonts)
       } catch (e) { }
     }
   }

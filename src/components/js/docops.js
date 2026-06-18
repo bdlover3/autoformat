@@ -5,7 +5,7 @@
 
 import {
   isTitleLike, isSpeechSignature, findFirstEndSymbol,
-  attachmentPattern, endSymbolPattern, ANY_PUNCT_REGEX
+  attachmentPattern
 } from './patterns.js'
 
 /**

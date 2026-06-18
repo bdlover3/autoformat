@@ -381,7 +381,7 @@ function openFormatPanel(doc, settings) {
     }
 
     //轮询 TaskPane 通过 PluginStorage 发来的指令
-    function pollPanelAction() {
+    const pollPanelAction = () => {
       try {
         const storage = window.Application.PluginStorage
         const action = storage.getItem('__formatPanelAction')
@@ -507,15 +507,15 @@ function GetImage(control) {
   return 'images/newFromTemp.svg'
 }
 
-function OnGetEnabled(control) {
+function OnGetEnabled() {
   return true
 }
 
-function OnGetVisible(control) {
+function OnGetVisible() {
   return true
 }
 
-function OnGetLabel(control) {
+function OnGetLabel() {
   return ''
 }
 

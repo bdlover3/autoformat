@@ -39,7 +39,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 const TYPE_LABELS = {
   docNumber: '文号',

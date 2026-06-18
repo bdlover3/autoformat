@@ -1,81 +1,63 @@
 //==============================================================
 // 特殊要素规则配置 (rules.js)
 //
-// 核心设计：每种元素类型 = 一个 RULE 对象，包含：
-//   type        - 类型标识
-//   label       - 面板显示名
-//   priority    - 检测优先级（越小越先检测）
-//   detect      - 认定规则：函数(text, ctx) => boolean
-//   format      - 格式化规则：函数(range, settings, fonts)
-//                  range = doc.Range(start, end) 精准范围
-//   special     - 特殊规则（可选）：如多行标题、位置约束等
+// 纯声明式规则表 — 每种特殊元素 = 一个规则对象
+// 检测和格式化的执行逻辑在 detect.js / format.js 中
 //
-// 格式化策略：
-//   全文先按 body 格式化 → 特殊元素用 start/end 精准覆盖
-//   这样绝不存在格式相互覆盖的问题
+// 规则字段：
+//   type        - 类型标识（唯一键）
+//   label       - 面板显示名
+//   priority    - 检测优先级（越小越先检测；body 无 priority）
+//   detect      - 检测规格（声明式对象，由 detect.js 解释执行）
+//   formatSpec  - 格式化规格（声明式对象，由 format.js 解释执行）
+//   special     - 特殊处理规格（可选）
 //==============================================================
 
-import {
-  docNumberPattern,
-  subtitlePattern,
-  addresseeEndPattern,
-  h1Pattern,
-  h2Pattern,
-  h3Pattern,
-  h4Pattern,
-  datePattern,
-  attachmentPattern,
-  endSymbolPattern,
-  isSpeechSignature,
-  isTitleLike,
-  looksLikeOtherPattern
-} from './patterns.js'
-
-//--- 格式化基础工具 ---
-
-/** WPS Alignment 枚举值常量 */
-export const Align = { LEFT: 0, CENTER: 1, RIGHT: 2, JUSTIFY: 3 }
-
-/** 设置 Range 基础字体属性 */
-export function setRangeBaseFont(range, fontName, lineSpacing) {
-  range.Font.Name = fontName
-  range.Font.Bold = false
-  range.Font.NameAscii = 'Times New Roman'
-  range.Font.NameOther = 'Times New Roman'
-  range.ParagraphFormat.LineSpacingRule = 4
-  range.ParagraphFormat.LineSpacing = lineSpacing
-  range.ParagraphFormat.FirstLineIndent = 0
-}
-
 //--- ============================================================ ---
-//--- 规则定义：一个特殊元素一个选项                                  ---
+//--- 规则定义                                                      ---
 //--- ============================================================ ---
 
 /**
- * 规则表：从正文到所有特殊元素
+ * 检测规格 (detect) 说明：
  *
- * 每条规则的字段说明：
- *   type      - 类型标识（唯一键）
- *   label     - 面板显示名
- *   priority  - 检测优先级（0=最高，先检测；body 无 priority 因为是默认）
- *   detect    - 认定规则(text, ctx) => boolean
- *              text=待检测文本，ctx={ result, textMap, baseTxt, titleEndIdx, ... }
- *   format    - 格式化规则(range, settings, fonts)
- *              range = doc.Range(start, end) 精准范围
- *              只操作这个 range 内的文字格式，不影响其他段落
- *   special   - 特殊规则（可选）：
- *     headSequence  - 是否头部区域顺序识别
- *     contiguous    - 必须从文首连续出现
- *     multiline     - 多行合并（如标题最多3行）
- *     maxLines      - 多行合并的最大行数
- *     continuationDetect(text) - 续行判定
- *     afterType     - 必须紧跟在某类型之后
- *     region        - 位置约束：'head'=头部, 'footer'=文末
- *     regionRange(ctx) - 位置范围函数
- *     gapRequired   - 认领前是否需要空行隔开
- *     scanDirection - 扫描方向
- *     groupWith     - 分组对齐类型
- *     maxLines      - 最多行数
+ * mode:
+ *   'pattern'       - 单正则匹配，需提供 pattern 字段名
+ *   'composite'     - 组合正则（匹配任一），需提供 pattern + extraPattern
+ *   'isTitleLike'   - 调用 patterns.isTitleLike()
+ *   'isSpeechSignature' - 调用 patterns.isSpeechSignature()
+ *   'notTitleLike'  - 排除法：!isTitleLike(text)
+ *   'patternWithNegate' - 正则匹配 + 否定约束
+ *
+ * pattern / extraPattern - patterns.js 中导出的正则变量名
+ * negateTitleLike  - 排除"像标题"的文本
+ * negateSpeechSig  - 排除署名格式的文本
+ * minLength / maxLength - 文本长度约束
+ *
+ * 格式化规格 (formatSpec) 说明：
+ *
+ * fontKey     - fonts 对象中的字体键名（如 'bodyFontName'）
+ * fontSizeKey - settings 对象中的字号键名（如 'bodyFontSize'）
+ * alignment   - 对齐方式：'left' | 'center' | 'right' | 'justify'
+ * firstIndent - 首行缩进（字符单位）：0 = 无缩进, 2 = 两字符
+ * bold        - 是否加粗（默认 false）
+ *
+ * 特殊处理规格 (special) 说明：
+ *
+ * headSequence       - 是否头部区域顺序识别
+ * contiguous         - 必须从文首连续出现
+ * multiline          - 多行合并（如标题最多3行）
+ * maxLines           - 多行合并的最大行数
+ * afterType          - 必须紧跟在某类型之后
+ * region             - 位置约束：'head' | 'footer'
+ * regionOffset       - 区域范围（声明式）：
+ *   from: 'titleEnd' - 基于 titleEndIdx 偏移
+ *   min / max        - 偏移量
+ * gapRequired        - 认领前是否需要空行隔开
+ * scanDirection      - 扫描方向：'reverse'
+ * groupWith          - 分组对齐类型
+ * continuation       - 续行规格（声明式）：
+ *   negatePattern       - 排除正则（匹配则不能续行）
+ *   negateMode          - 排除模式：'looksLikeOtherPattern'
  */
 const RULES = [
 
@@ -84,17 +66,12 @@ const RULES = [
     type: 'body',
     label: '正文',
     // body 无 detect —— 全文先刷正文格式，特殊元素再精准覆盖
-    format(range, settings, fonts) {
-      range.Font.Name = fonts.bodyFontName
-      range.Font.Size = settings.bodyFontSize
-      range.Font.Bold = false
-      range.Font.NameAscii = 'Times New Roman'
-      range.Font.NameOther = 'Times New Roman'
-      range.ParagraphFormat.LineSpacingRule = 4
-      range.ParagraphFormat.LineSpacing = settings.lineSpacing
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 2
-      range.ParagraphFormat.FirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.JUSTIFY
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'justify',
+      firstIndent: 2,
+      bold: false
     }
   },
 
@@ -103,14 +80,12 @@ const RULES = [
     type: 'attachment',
     label: '附件',
     priority: 1,
-    detect(text) {
-      return attachmentPattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.LEFT
+    detect: { mode: 'pattern', pattern: 'attachmentPattern' },
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'left',
+      firstIndent: 0
     },
     special: {
       headSequence: true,
@@ -123,14 +98,12 @@ const RULES = [
     type: 'docNumber',
     label: '文号',
     priority: 2,
-    detect(text) {
-      return docNumberPattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.CENTER
+    detect: { mode: 'pattern', pattern: 'docNumberPattern' },
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       headSequence: true
@@ -142,25 +115,20 @@ const RULES = [
     type: 'title',
     label: '标题',
     priority: 3,
-    detect(text, ctx) {
-      if (!text || text.length < 2) return false
-      if (looksLikeOtherPattern(text, false)) return false
-      return true
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.titleFontName, settings.lineSpacing)
-      range.Font.Size = settings.titleFontSize
-      range.ParagraphFormat.Alignment = Align.CENTER
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+    detect: { mode: 'isTitleLike', minLength: 2 },
+    formatSpec: {
+      fontKey: 'titleFontName',
+      fontSizeKey: 'titleFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       headSequence: true,
       multiline: true,
       maxLines: 3,
-      continuationDetect(text) {
-        if (endSymbolPattern.test(text)) return false
-        if (looksLikeOtherPattern(text, true)) return false
-        return true
+      continuation: {
+        negatePattern: 'endSymbolPattern',
+        negateMode: 'looksLikeOtherPattern'
       }
     }
   },
@@ -170,14 +138,12 @@ const RULES = [
     type: 'subtitle',
     label: '小标题',
     priority: 4,
-    detect(text) {
-      return subtitlePattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.subtitleFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.Alignment = Align.CENTER
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+    detect: { mode: 'pattern', pattern: 'subtitlePattern' },
+    formatSpec: {
+      fontKey: 'subtitleFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       headSequence: true,
@@ -190,14 +156,12 @@ const RULES = [
     type: 'h1',
     label: '一、',
     priority: 5,
-    detect(text) {
-      return h1Pattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.h1FontName, settings.lineSpacing)
-      range.Font.Size = settings.h1FontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 2
-      range.ParagraphFormat.Alignment = Align.LEFT
+    detect: { mode: 'pattern', pattern: 'h1Pattern' },
+    formatSpec: {
+      fontKey: 'h1FontName',
+      fontSizeKey: 'h1FontSize',
+      alignment: 'left',
+      firstIndent: 2
     }
   },
 
@@ -206,14 +170,12 @@ const RULES = [
     type: 'h2',
     label: '（一）',
     priority: 6,
-    detect(text) {
-      return h2Pattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.h2FontName, settings.lineSpacing)
-      range.Font.Size = settings.h2FontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 2
-      range.ParagraphFormat.Alignment = Align.LEFT
+    detect: { mode: 'pattern', pattern: 'h2Pattern' },
+    formatSpec: {
+      fontKey: 'h2FontName',
+      fontSizeKey: 'h2FontSize',
+      alignment: 'left',
+      firstIndent: 2
     }
   },
 
@@ -222,14 +184,12 @@ const RULES = [
     type: 'h3',
     label: '1.',
     priority: 7,
-    detect(text) {
-      return h3Pattern.test(text) || h4Pattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.h3FontName, settings.lineSpacing)
-      range.Font.Size = settings.h3FontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 2
-      range.ParagraphFormat.Alignment = Align.LEFT
+    detect: { mode: 'composite', pattern: 'h3Pattern', extraPattern: 'h4Pattern' },
+    formatSpec: {
+      fontKey: 'h3FontName',
+      fontSizeKey: 'h3FontSize',
+      alignment: 'left',
+      firstIndent: 2
     }
   },
 
@@ -238,14 +198,12 @@ const RULES = [
     type: 'addressee',
     label: '抬头',
     priority: 8,
-    detect(text) {
-      return addresseeEndPattern.test(text) && text.length <= 30
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.LEFT
+    detect: { mode: 'pattern', pattern: 'addresseeEndPattern', maxLength: 30 },
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'left',
+      firstIndent: 0
     }
   },
 
@@ -254,20 +212,16 @@ const RULES = [
     type: 'signature',
     label: '署名',
     priority: 9,
-    detect(text, ctx) {
-      return isSpeechSignature(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.CENTER
+    detect: { mode: 'isSpeechSignature' },
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       region: 'head',
-      regionRange(ctx) {
-        return { min: (ctx.titleEndIdx || 0) + 1, max: (ctx.titleEndIdx || 0) + 6 }
-      },
+      regionOffset: { from: 'titleEnd', min: 1, max: 6 },
       gapRequired: true
     }
   },
@@ -277,17 +231,14 @@ const RULES = [
     type: 'sig',
     label: '落款',
     priority: 10,
-    detect(text, ctx) {
-      if (isTitleLike(text) && !isSpeechSignature(text)) return false
-      return true
-    },
+    detect: { mode: 'notTitleLike' },
     // sig+date 统一走 applyFooterAlignment（字符宽度对齐）
-    // 此处 format 仅用于非对齐场景的独立格式化
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.CENTER
+    // formatSpec 仅用于非对齐场景的独立格式化
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       region: 'footer',
@@ -302,14 +253,12 @@ const RULES = [
     type: 'date',
     label: '日期',
     priority: 11,
-    detect(text) {
-      return datePattern.test(text)
-    },
-    format(range, settings, fonts) {
-      setRangeBaseFont(range, fonts.bodyFontName, settings.lineSpacing)
-      range.Font.Size = settings.bodyFontSize
-      range.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      range.ParagraphFormat.Alignment = Align.CENTER
+    detect: { mode: 'pattern', pattern: 'datePattern' },
+    formatSpec: {
+      fontKey: 'bodyFontName',
+      fontSizeKey: 'bodyFontSize',
+      alignment: 'center',
+      firstIndent: 0
     },
     special: {
       region: 'footer',
@@ -319,7 +268,7 @@ const RULES = [
   }
 ]
 
-//--- 导出规则表和查询函数 ---
+//--- 导出 ---
 
 /** 完整规则表（含 body） */
 export { RULES }
@@ -343,15 +292,7 @@ export function getTypeLabelMap() {
   return map
 }
 
-/** 检测优先级排序（不含 body），返回 type 数组 */
-export function getDetectOrder() {
-  return RULES
-    .filter(r => r.type !== 'body')
-    .sort((a, b) => a.priority - b.priority)
-    .map(r => r.type)
-}
-
-/** 头部顺序识别的类型列表 */
+/** 获取头部顺序识别的类型列表 */
 export function getHeadSequenceTypes() {
   return RULES
     .filter(r => r.special && r.special.headSequence)

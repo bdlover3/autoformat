@@ -25,7 +25,7 @@ export function isSpeechSignature(text) {
   if (!text) return false
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
   if (/^[\u4e00-\u9fa5]{2,8}\s+[\u4e00-\u9fa5]{2,4}$/.test(text)) return true
-  if (/^[（\(]?\d{4}年\d{1,2}月\d{1,2}日[）\)]?$/.test(text)) return true
+  if (/^[（(]?\d{4}年\d{1,2}月\d{1,2}日[）)]?$/.test(text)) return true
   return false
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="panel">
+  <div class="panel" @click="onPanelClick">
     <div class="panel-header">
       <span class="panel-title">排版微调</span>
       <span class="close-btn" @click="closePanel">
@@ -26,14 +26,18 @@
               class="element-item"
               :class="'item-' + item.type"
             >
-              <div
-                class="element-text"
-                contenteditable="true"
-                spellcheck="false"
-                :data-idx="item.start"
-                @input="onTextChanged($event, item)"
-                @blur="onBlur"
-              >{{ item.text }}</div>
+              <div class="element-row">
+                <div
+                  class="element-text"
+                  contenteditable="true"
+                  spellcheck="false"
+                  :data-idx="item.start"
+                  @input="onTextChanged($event, item)"
+                  @blur="onBlur"
+                  @mouseup="onTextSelect($event, item)"
+                >{{ item.text }}</div>
+                <span class="type-badge" :class="'badge-' + item.type">{{ typeLabel(item.type) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -41,6 +45,25 @@
       <div v-else class="empty-hint">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="#bbb" stroke-width="1.5"/><path d="M9 14l2 2 4-4" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>未检测到特殊元素</span>
+      </div>
+    </div>
+
+    <!-- 修改类型的右键/选中菜单 -->
+    <div
+      v-if="contextMenu.visible"
+      class="context-menu"
+      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+    >
+      <div class="context-header">调整为：</div>
+      <div
+        v-for="t in allTypes"
+        :key="t.key"
+        class="context-item"
+        :class="{ active: contextMenu.currentType === t.key }"
+        @click.stop="changeType(contextMenu.itemStart, t.key)"
+      >
+        <span class="context-dot" :class="'badge-' + t.key"></span>
+        {{ t.label }}
       </div>
     </div>
 
@@ -68,7 +91,20 @@ const TYPE_LABELS = {
   date: '日期'
 }
 
-//分组顺序与显示名
+const ALL_TYPES = [
+  { key: 'docNumber', label: '文号' },
+  { key: 'title', label: '标题' },
+  { key: 'subtitle', label: '小标题' },
+  { key: 'addressee', label: '抬头' },
+  { key: 'attachment', label: '附件' },
+  { key: 'h1', label: '一级标题' },
+  { key: 'h2', label: '二级标题' },
+  { key: 'h3', label: '三级标题' },
+  { key: 'signature', label: '署名' },
+  { key: 'sig', label: '落款' },
+  { key: 'date', label: '日期' }
+]
+
 const GROUP_ORDER = [
   { key: 'head', label: '公文头部', types: ['docNumber', 'title', 'subtitle', 'addressee', 'attachment'] },
   { key: 'body', label: '正文标题', types: ['h1', 'h2', 'h3'] },
@@ -80,6 +116,13 @@ export default {
   setup() {
     const elements = ref([])
     const collapsedGroups = reactive({})
+    const contextMenu = reactive({
+      visible: false,
+      x: 0,
+      y: 0,
+      itemStart: -1,
+      currentType: ''
+    })
     let debounceTimer = null
     let dirty = false
 
@@ -96,14 +139,14 @@ export default {
       } catch (e) {
         console.warn('[FormatPanel] PluginStorage read failed:', e)
       }
+      //点击面板外区域关闭右键菜单
+      document.addEventListener('mousedown', onDocMouseDown)
     })
 
-    //按文档出现顺序排列
     const sortedElements = computed(() => {
       return [...elements.value].sort((a, b) => a.start - b.start)
     })
 
-    //按分组归类
     const groupedElements = computed(() => {
       const groups = []
       for (const g of GROUP_ORDER) {
@@ -121,6 +164,45 @@ export default {
 
     function toggleGroup(key) {
       collapsedGroups[key] = !collapsedGroups[key]
+    }
+
+    //选中文字后弹出菜单
+    function onTextSelect(event, item) {
+      const sel = window.getSelection()
+      const selectedText = sel ? sel.toString().trim() : ''
+      if (!selectedText) return
+
+      const rect = event.target.getBoundingClientRect()
+      const panelRect = event.target.closest('.panel').getBoundingClientRect()
+      contextMenu.visible = true
+      contextMenu.x = rect.left - panelRect.left
+      contextMenu.y = rect.bottom - panelRect.top + 4
+      contextMenu.itemStart = item.start
+      contextMenu.currentType = item.type
+    }
+
+    //点击面板空白处关闭菜单
+    function onPanelClick(event) {
+      if (contextMenu.visible && !event.target.closest('.context-menu')) {
+        contextMenu.visible = false
+      }
+    }
+
+    function onDocMouseDown(event) {
+      if (contextMenu.visible && !event.target.closest('.context-menu')) {
+        contextMenu.visible = false
+      }
+    }
+
+    //修改元素类型
+    function changeType(itemStart, newType) {
+      const el = elements.value.find(e => e.start === itemStart)
+      if (el) {
+        el.type = newType
+        dirty = true
+        flushDebounce()
+      }
+      contextMenu.visible = false
     }
 
     function flushDebounce() {
@@ -178,10 +260,15 @@ export default {
       sortedElements,
       groupedElements,
       collapsedGroups,
+      contextMenu,
+      allTypes: ALL_TYPES,
       typeLabel,
       toggleGroup,
       onTextChanged,
       onBlur,
+      onTextSelect,
+      onPanelClick,
+      changeType,
       closePanel,
       cancel
     }
@@ -204,6 +291,7 @@ export default {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -318,7 +406,14 @@ export default {
 .item-sig        { border-left-color: #e57373; }
 .item-date       { border-left-color: #f44336; }
 
+/* === 元素行（文字 + 标签） === */
+.element-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
 .element-text {
+  flex: 1;
   outline: none;
   border: 1px solid transparent;
   background: transparent;
@@ -352,6 +447,83 @@ export default {
 }
 .item-h3 .element-text {
   padding-left: 16px;
+}
+
+/* === 类型标签 === */
+.type-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  margin-top: 4px;
+  color: #fff;
+  font-weight: 500;
+}
+.badge-docNumber  { background: #4caf50; }
+.badge-title      { background: #2196f3; }
+.badge-subtitle   { background: #42a5f5; }
+.badge-addressee  { background: #26a69a; }
+.badge-attachment { background: #66bb6a; }
+.badge-h1         { background: #5c6bc0; }
+.badge-h2         { background: #7986cb; }
+.badge-h3         { background: #9fa8da; }
+.badge-signature  { background: #ef5350; }
+.badge-sig        { background: #e57373; }
+.badge-date       { background: #f44336; }
+
+/* === 右键菜单（调整为...） === */
+.context-menu {
+  position: absolute;
+  z-index: 100;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  padding: 4px 0;
+  min-width: 120px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.context-header {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #999;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 2px;
+}
+.context-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #333;
+  transition: background 0.1s;
+}
+.context-item:hover {
+  background: #f0f6ff;
+  color: #1677ff;
+}
+.context-item.active {
+  color: #999;
+  cursor: default;
+  background: transparent;
+}
+.context-item.active::after {
+  content: '✓';
+  margin-left: auto;
+  font-size: 11px;
+  color: #1677ff;
+}
+.context-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 /* === 空状态 === */
@@ -417,5 +589,12 @@ export default {
 }
 .panel-body::-webkit-scrollbar-thumb:hover {
   background: #bbb;
+}
+.context-menu::-webkit-scrollbar {
+  width: 4px;
+}
+.context-menu::-webkit-scrollbar-thumb {
+  background: #ddd;
+  border-radius: 2px;
 }
 </style>

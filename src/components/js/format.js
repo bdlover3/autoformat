@@ -13,14 +13,6 @@ import { measureWidth } from './patterns.js'
 
 //--- 格式化基础工具 ---
 
-/** WPS Alignment 枚举值常量 */
-const ALIGN_MAP = {
-  left: 0,
-  center: 1,
-  right: 2,
-  justify: 3
-}
-
 /** 设置 Range 基础字体属性 */
 function setRangeBaseFont(range, fontName, lineSpacing) {
   range.Font.Name = fontName
@@ -33,33 +25,6 @@ function setRangeBaseFont(range, fontName, lineSpacing) {
 }
 
 /**
- * 根据声明式 format 规格对 Range 执行格式化
- * @param {Object} range WPS Range 对象
- * @param {Object} formatSpec 规则的 format 规格
- * @param {Object} settings 用户设置
- * @param {Object} fonts 可用字体映射
- */
-function applyFormatSpec(range, formatSpec, settings, fonts) {
-  if (!formatSpec) return
-
-  // 字体和字号
-  const fontName = fonts[formatSpec.fontKey]
-  const fontSize = settings[formatSpec.sizeKey]
-  setRangeBaseFont(range, fontName, settings.lineSpacing)
-  if (fontSize) range.Font.Size = fontSize
-
-  // 对齐
-  if (formatSpec.alignment) {
-    range.ParagraphFormat.Alignment = ALIGN_MAP[formatSpec.alignment] || 0
-  }
-
-  // 首行缩进（字符单位）
-  if (typeof formatSpec.indent === 'number') {
-    range.ParagraphFormat.CharacterUnitFirstLineIndent = formatSpec.indent
-  }
-}
-
-/**
  * 全文先刷正文格式
  * 不跳过任何段落，一次性统一设置
  * @param {Object} doc
@@ -68,12 +33,14 @@ function applyFormatSpec(range, formatSpec, settings, fonts) {
  */
 export function applyBodyFormat(doc, settings, getAvailableFont) {
   const bodyRule = getRuleByType('body')
+  if (!bodyRule || typeof bodyRule.format !== 'function') return
+
   const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
   const fonts = { bodyFontName }
 
   const fullRange = doc.Content
   try {
-    applyFormatSpec(fullRange, bodyRule.format, settings, fonts)
+    bodyRule.format(fullRange, settings, fonts)
   } catch (e) { }
 }
 
@@ -111,10 +78,10 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
 
     // 从规则表查找格式化规格
     const rule = getRuleByType(el.type)
-    if (rule && rule.format) {
+    if (rule && typeof rule.format === 'function') {
       try {
         const range = doc.Range(el.start, el.end - 1)
-        applyFormatSpec(range, rule.format, settings, fonts)
+        rule.format(range, settings, fonts)
       } catch (e) { }
     }
   }

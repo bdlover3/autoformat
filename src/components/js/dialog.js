@@ -71,19 +71,6 @@ function saveSettings(settings) {
           }
           
           fs.AppendFile(filePath, settingsStr)
-          
-          if (fs.Exists(filePath)) {
-            let readContent = ''
-            try {
-              readContent = fs.ReadFile(filePath)
-            } catch (e) {
-              try {
-                readContent = fs.readFileString(filePath)
-              } catch (e2) {
-              }
-            }
-          } else {
-          }
         } else {
         }
       } catch (e) {

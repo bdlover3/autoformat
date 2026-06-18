@@ -12,7 +12,7 @@
 //==============================================================
 
 import {
-  getSpecialRules, getHeadSequenceTypes, getRuleByType
+  getSpecialRules, getHeadSequenceTypes
 } from './rules.js'
 import {
   docNumberPattern, subtitlePattern, addresseeEndPattern,

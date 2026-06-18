@@ -521,6 +521,7 @@ function OnGetLabel(control) {
 
 const CURRENT_VERSION = '1.1.0'
 const VERSION_URL = 'https://wpsautoformat.netlify.app/version.txt'
+const PROJECT_URL = 'https://gitee.com/rainsoft0456/wpsautoformat'
 
 async function checkForUpdates() {
   try {
@@ -534,7 +535,7 @@ async function checkForUpdates() {
     if (cleanVersion !== CURRENT_VERSION) {
       const result = window.confirm(`检测到新版本：${cleanVersion}\n当前版本：${CURRENT_VERSION}\n\n是否前往下载更新？`)
       if (result) {
-        window.Application.Hyperlink(VERSION_URL)
+        window.Application.Hyperlink(PROJECT_URL)
       }
     } else {
       alert(`当前已是最新版本：${CURRENT_VERSION}`)

@@ -75,7 +75,7 @@ export function truncateTitleByEndSymbol(doc, titleStart) {
 
 /**
  * 一键删除空行
- * 保留：标题与正文之间的空行、署名上下的空行
+ * 保留：标题与正文之间的空行、发言人上下的空行
  */
 export function removeBlankLines() {
   const doc = window.Application.ActiveDocument
@@ -111,7 +111,7 @@ export function removeBlankLines() {
       }
     }
 
-    //2) 保留署名上下的空行
+    //2) 保留发言人上下的空行
     if (titleEnd > 0) {
       for (let i = titleEnd + 1; i <= Math.min(titleEnd + 6, count); i++) {
         const txt = paragraphs.Item(i).Range.Text.replace(/[\r\n]+$/, '').trim()

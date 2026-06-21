@@ -1,12 +1,12 @@
 //==============================================================
-// 署名检测模块
+// 发言人检测模块
 // 独立按钮 btnDetectSignature 的逻辑
 //==============================================================
 
 import { isSpeechSignature, isTitleLike, endSymbolPattern, attachmentPattern } from './patterns.js'
 
 /**
- * 署名格式化（标题区后 1~5 行）
+ * 发言人格式化（标题区后 1~5 行）
  * @param {Object} doc
  * @param {number} titleEnd 标题结束段落索引
  * @param {Object} settings
@@ -25,7 +25,7 @@ export function formatSpeechSignature(doc, titleEnd, settings, applySpecialForma
     if (isSpeechSignature(t)) {
       const para = paragraphs.Item(i)
       collected.push({
-        type: 'signature',
+        type: 'authorInfo',
         text: t,
         start: para.Range.Start,
         end: para.Range.End
@@ -70,7 +70,7 @@ export function locateTitleEnd(doc) {
 }
 
 /**
- * 检测并格式化署名（独立按钮入口）
+ * 检测并格式化发言人（独立按钮入口）
  * @param {Object} getSettingsFn
  * @param {Function} applySpecialFormatFn
  */
@@ -81,7 +81,7 @@ export function detectAndFormatSpeechSignature(getSettingsFn, applySpecialFormat
   let undoRecord = null
   try {
     undoRecord = window.Application.UndoRecord
-    undoRecord.StartCustomRecord('署名检测')
+    undoRecord.StartCustomRecord('发言人检测')
   } catch (e) { }
 
   try {

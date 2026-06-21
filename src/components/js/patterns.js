@@ -18,9 +18,24 @@ export const datePattern = /^\d{4}([年.-]\d{1,2}([月.-]\d{1,2}日?)?|年\d{1,2
 export const attachmentPattern = /^附\s*件\d*/
 export const endSymbolPattern = /[。！？；]/
 
+//--- 结尾客套语模式（落款检测排除用） ---
+
+export const closingPattern = /^此致$|^敬礼$|^此致敬礼$|^特此.{0,4}$|^谨此.{0,4}$|^[此谨]致$/
+export const gratitudePattern = /^谢[谢恩].{0,6}$|^感谢.{0,6}$|^多谢.{0,4}$/
+
+/** 是否结尾客套语（此致敬礼/特此XX/谨此XX/致谢语 等） */
+export function isClosingFormula(text) {
+  if (!text) return false
+  if (closingPattern.test(text)) return true
+  if (gratitudePattern.test(text)) return true
+  // 纯标点行也排除
+  if (/^[，、。！？；：,.!?;:\s]+$/.test(text)) return true
+  return false
+}
+
 //--- 通用判定函数 ---
 
-/** 是否署名格式（讲话稿发言人）：纯姓名2-4字 / 单位+姓名 / 日期 */
+/** 是否发言人格式（讲话稿发言人）：纯姓名2-4字 / 单位+姓名 / 日期 */
 export function isSpeechSignature(text) {
   if (!text) return false
   if (/^[\u4e00-\u9fa5]{2,4}$/.test(text)) return true

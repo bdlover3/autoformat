@@ -6,7 +6,7 @@ import { detectElements } from './js/detect.js'
 import { applyBodyFormat, applySpecialFormat, boldEnumerations } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
 import { removeBlankLines, splitTitleParagraph } from './js/docops.js'
-import { detectAndFormatSpeechSignature } from './js/signature.js'
+import { loadTypeMemory, recordTypeChanges } from './js/typememory.js'
 
 //默认格式设置
 const DEFAULT_SETTINGS = {
@@ -50,42 +50,49 @@ function getSettingsFilePath() {
 //字体检测状态
 let fontWarningShownInSession = false
 
+//无落款/发言人提示状态（每个文档仅提示一次）
+let noFooterWarned = false
+let noFooterWarnedDocName = ''
+
 function getSettings() {
   const result = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
 
   let saved = null
-  const filePath = getSettingsFilePath()
-  if (filePath) {
-    try {
-      if (window.Application && window.Application.FileSystem) {
-        const fs = window.Application.FileSystem
-        if (fs.Exists(filePath)) {
-          let content = null
-          try {
-            content = fs.ReadFile(filePath)
-          } catch (e1) {
-            try {
-              content = fs.readFileString(filePath)
-            } catch (e2) { }
-          }
-          if (content) {
-            saved = JSON.parse(content)
-          }
-        }
+
+  // 优先从 PluginStorage 读取（内存中，跨窗口同步，不会缓存过期）
+  try {
+    if (window.Application && window.Application.PluginStorage) {
+      let s = window.Application.PluginStorage.getItem('formatSettings')
+      if (s) {
+        saved = JSON.parse(s)
       }
-    } catch (e) {
     }
+  } catch (e) {
   }
 
+  // PluginStorage 无数据时再读文件
   if (!saved) {
-    try {
-      if (window.Application && window.Application.PluginStorage) {
-        let s = window.Application.PluginStorage.getItem('formatSettings')
-        if (s) {
-          saved = JSON.parse(s)
+    const filePath = getSettingsFilePath()
+    if (filePath) {
+      try {
+        if (window.Application && window.Application.FileSystem) {
+          const fs = window.Application.FileSystem
+          if (fs.Exists(filePath)) {
+            let content = null
+            try {
+              content = fs.ReadFile(filePath)
+            } catch (e1) {
+              try {
+                content = fs.readFileString(filePath)
+              } catch (e2) { }
+            }
+            if (content) {
+              saved = JSON.parse(content)
+            }
+          }
         }
+      } catch (e) {
       }
-    } catch (e) {
     }
   }
 
@@ -219,7 +226,11 @@ function checkFontsOncePerSession() {
 
     const missingFonts = checkRequiredFonts(settings)
     if (missingFonts.length > 0) {
-      window.__fontDialogPending = { missingFonts: missingFonts }
+      // 通过 PluginStorage 传递数据（ShowDialog 是独立窗口，不共享 window）
+      try {
+        const storage = window.Application.PluginStorage
+        storage.setItem('__fontDialogPending', JSON.stringify({ missingFonts }))
+      } catch (e) { }
       try {
         window.Application.ShowDialog(
           Util.GetUrlPath() + Util.GetRouterHash() + '/fontwarning',
@@ -230,11 +241,23 @@ function checkFontsOncePerSession() {
         )
       } catch (e) {
       }
-      const result = window.__fontDialogResult
-      window.__fontDialogPending = null
-      window.__fontDialogResult = null
+      // 从 PluginStorage 读取对话框结果
+      let result = null
+      try {
+        const storage = window.Application.PluginStorage
+        const raw = storage.getItem('__fontDialogResult')
+        if (raw) {
+          result = JSON.parse(raw)
+          storage.removeItem('__fontDialogResult')
+        }
+      } catch (e) { }
 
-      if (result && result.replacements) {
+      if (result && result.disableFontWarning) {
+        // "不再提醒"：保存设置，关联设置对话框的屏蔽选项
+        const updated = getSettings()
+        updated.disableFontWarning = true
+        saveSettings(updated)
+      } else if (result && result.replacements) {
         const updated = getSettings()
         updated.fontReplacements = { ...(updated.fontReplacements || {}), ...result.replacements }
         if (result.saveFuture) {
@@ -255,9 +278,18 @@ function OnAction(control) {
       break
     }
     case 'btnDetectSignature': {
-      detectAndFormatSpeechSignature(getSettings, (doc, settings, elements) => {
-        applySpecialFormat(doc, settings, elements, getAvailableFont)
-      })
+      // 记忆管理按钮
+      try {
+        const memory = loadTypeMemory()
+        window.__memoryData = memory
+        window.Application.ShowDialog(
+          Util.GetUrlPath() + Util.GetRouterHash() + '/memory',
+          '记忆管理',
+          420 * window.devicePixelRatio,
+          500 * window.devicePixelRatio,
+          true
+        )
+      } catch (e) { }
       break
     }
     case 'btnRemoveBlankLines': {
@@ -340,6 +372,9 @@ function handlePanelMessage(msg) {
     if (!doc) return
     const settings = getSettings()
 
+    // 保存快照用于记忆记录
+    const oldSnapshot = JSON.parse(JSON.stringify(specialElements))
+
     let panelUndo = null
     try {
       panelUndo = window.Application.UndoRecord
@@ -371,6 +406,8 @@ function handlePanelMessage(msg) {
           })
         }
       } catch (e2) { }
+      // 记录类型变更到记忆
+      recordTypeChanges(oldSnapshot, specialElements)
     } catch (e) {
       console.warn('[handlePanelMessage] apply failed:', e)
     }
@@ -406,7 +443,7 @@ function autoFormatDocument() {
     }
     setupPage(doc, settings)
 
-    specialElements = detectElements(doc)
+    specialElements = detectElements(doc, settings)
     applyBodyFormat(doc, settings, getAvailableFont)
     const posUpdates = applySpecialFormat(doc, settings, specialElements, getAvailableFont)
     boldEnumerations(doc)
@@ -420,6 +457,22 @@ function autoFormatDocument() {
           el.end = upd.newEnd
         }
       }
+    }
+
+    //无落款/发言人提示（每个文档仅一次）
+    const hasFooter = specialElements.some(el => el.type === 'sig' || el.type === 'date' || el.type === 'authorInfo' || el.type === 'authorInfo')
+    if (!hasFooter) {
+      try {
+        const docName = doc.FullName || doc.Name || ''
+        if (docName !== noFooterWarnedDocName) {
+          noFooterWarnedDocName = docName
+          noFooterWarned = false
+        }
+        if (!noFooterWarned) {
+          noFooterWarned = true
+          alert('未检测到落款或发言人，如需手动指定，可在排版微调面板中调整类型。')
+        }
+      } catch (e) { }
     }
 
     checkFontsOncePerSession()

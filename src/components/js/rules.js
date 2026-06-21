@@ -30,7 +30,7 @@
  *
  * pattern / extraPattern - patterns.js 中导出的正则变量名
  * negateTitleLike  - 排除"像标题"的文本
- * negateSpeechSig  - 排除署名格式的文本
+ * negateSpeechSig  - 排除发言人格式的文本
  * minLength / maxLength - 文本长度约束
  *
  * 格式化规格 (formatSpec) 说明：
@@ -194,6 +194,8 @@ const RULES = [
   },
 
   //--- 8. 抬头 ---
+  // 抬头 = 排除头部元素（附件/文号/标题/副标题）后正文的第一行
+  // 只有一行，紧跟在最后一个头部元素之后；检测完即结束
   {
     type: 'addressee',
     label: '抬头',
@@ -204,13 +206,17 @@ const RULES = [
       fontSizeKey: 'bodyFontSize',
       alignment: 'left',
       firstIndent: 0
+    },
+    special: {
+      headSequence: true
     }
   },
 
-  //--- 9. 署名 (signature) ---
+  //--- 9. 发言人 (authorInfo) ---
+  // 标题后空行隔开的拟稿单位/拟稿人/日期，0-3行，居中
   {
-    type: 'signature',
-    label: '署名',
+    type: 'authorInfo',
+    label: '发言人',
     priority: 9,
     detect: { mode: 'isSpeechSignature' },
     formatSpec: {
@@ -244,7 +250,7 @@ const RULES = [
       region: 'footer',
       scanDirection: 'reverse',
       groupWith: 'date',
-      maxLines: 2
+      maxLines: 3
     }
   },
 

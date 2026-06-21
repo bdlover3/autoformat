@@ -15,6 +15,7 @@
 
 import { RULES } from './rules.js'
 import { measureWidth } from './patterns.js'
+import { matchDetect } from './detect.js'
 
 //--- 对齐方式常量 ---
 
@@ -137,8 +138,10 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
 
     // 获取完整段落范围（含段落标记），段落格式属性需要段落标记才能正确生效
     let fullParaRange = null
+    let elText = ''
     try {
       const elRange = doc.Range(el.start, el.end - 1)
+      elText = elRange.Text.replace(/[\r\n]+$/, '').trim()
       fullParaRange = elRange.Paragraphs.Item(1).Range
     } catch (e) { continue }
 
@@ -149,12 +152,24 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
       } catch (e) { }
     }
 
-    // 再用规则精准覆盖
+    // 核对当前文本是否仍匹配该类型规则
     const rule = RULES.find(r => r.type === el.type)
     if (rule && rule.formatSpec) {
-      try {
-        applyFormatSpec(fullParaRange, rule.formatSpec, settings, fonts)
-      } catch (e) { }
+      const detectSpec = rule.detect
+      const matched = detectSpec ? matchDetect(elText, detectSpec) : true
+      if (matched) {
+        // 匹配：正常应用规则格式
+        try {
+          applyFormatSpec(fullParaRange, rule.formatSpec, settings, fonts)
+        } catch (e) { }
+      } else {
+        // 不匹配：正文格式（无缩进）
+        try {
+          fullParaRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+          fullParaRange.ParagraphFormat.FirstLineIndent = 0
+        } catch (e) { }
+        el.matched = false
+      }
     }
   }
 
@@ -221,15 +236,17 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
 
   //用前导空格实现右对齐（LeftIndent 无法表达半字符偏移，空格是唯一可靠方式）
   //返回位置更新信息，供调用方同步 start/end
+  //逆序处理：从文档末尾往前写，避免前导空格插入导致后续行字符位置偏移
   const posUpdates = []
-  for (const line of lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
     const padW = baseLeft + (maxW - line.width) / 2
     // padW 是半字符单位宽度，转为全角空格数需 /2（每个全角空格宽度=2半字符）
     const fullSpaces = Math.floor(padW / 2)
     const frac = padW / 2 - fullSpaces  // 剩余半字符单位（0~1）
     const halfSpace = frac > 0.25  // 剩余超过0.25个半字符时补一个半角空格
     let spaces = ''
-    for (let i = 0; i < fullSpaces; i++) spaces += '\u3000'  // 全角空格
+    for (let j = 0; j < fullSpaces; j++) spaces += '\u3000'  // 全角空格
     if (halfSpace) spaces += ' '  // 半角空格补齐
     try {
       const rng = doc.Range(line.paraStart, line.paraEnd - 1)

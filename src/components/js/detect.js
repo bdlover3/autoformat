@@ -18,8 +18,11 @@ import {
   docNumberPattern, subtitlePattern, addresseeEndPattern,
   h1Pattern, h2Pattern, h3Pattern, h4Pattern,
   datePattern, attachmentPattern, endSymbolPattern,
-  isSpeechSignature, isTitleLike, looksLikeOtherPattern
+  isSpeechSignature, isTitleLike, looksLikeOtherPattern,
+  isClosingFormula, measureWidth
 } from './patterns.js'
+import { loadTypeMemory } from './typememory.js'
+import { calcLineCharCount } from './format.js'
 
 //--- 声明式 detect 规格的解释器 ---
 
@@ -36,7 +39,7 @@ const PATTERN_MAP = {
  * @param {Object} spec 规则的 detect 规格
  * @returns {boolean}
  */
-function matchDetect(text, spec) {
+export function matchDetect(text, spec) {
   if (!spec) return false
 
   const mode = spec.mode
@@ -133,7 +136,8 @@ function buildBaseTxt(doc) {
           result.push({
             text: trimmed,
             start: paraStart,
-            end: paraEnd
+            end: paraEnd,
+            paraIndex: i
           })
         }
       } catch (e) { }
@@ -152,9 +156,10 @@ function buildBaseTxt(doc) {
  *   type  - 要素类型
  *
  * @param {Object} doc WPS ActiveDocument 对象
+ * @param {Object} settings 用户设置（用于行宽计算）
  * @returns {Array} 检测到的特殊要素列表，按 start 升序
  */
-export function detectElements(doc) {
+export function detectElements(doc, settings) {
   const baseTxt = buildBaseTxt(doc)
   const total = baseTxt.length
   if (total === 0) return []
@@ -166,6 +171,18 @@ export function detectElements(doc) {
   }
 
   const result = []
+
+  //--- 记忆预认领：用户曾手动调整过的文本→类型映射 ---
+  const memory = loadTypeMemory()
+  const memoryKeys = Object.keys(memory)
+  if (memoryKeys.length > 0) {
+    for (let i = 0; i < total; i++) {
+      const text = baseTxt[i].text
+      if (text in memory) {
+        claim(i, memory[text])
+      }
+    }
+  }
 
   //--- 辅助函数 ---
 
@@ -269,12 +286,17 @@ export function detectElements(doc) {
 
       const maxLines = sp.maxLines || 3
       const contSpec = sp.continuation
+      let prevParaIdx = baseTxt[firstIdx].paraIndex
       for (let i = firstIdx + 1; i <= Math.min(firstIdx + maxLines - 1, total - 1); i++) {
         if (!textMap.has(i)) break
+        // 空行中断：段落索引不连续说明中间有空段落，标题不能跨空行续行
+        const curParaIdx = baseTxt[i].paraIndex
+        if (curParaIdx - prevParaIdx > 1) break
         const curr = textMap.get(i).text
         if (!matchContinuation(curr, contSpec)) break
         claim(i, rule.type)
         lastHeadIdx = i
+        prevParaIdx = curParaIdx
       }
     } else {
       // 通用头部规则：从上次头部位置后找第一个匹配
@@ -299,6 +321,45 @@ export function detectElements(doc) {
     ? baseTxt.findIndex(b => b.start === titleEl.start && b.end === titleEl.end)
     : -1
 
+  //=== 标题后发言信息前向扫描 ===
+  // 公文中常见：标题 → 空行 → 发言信息（拟稿单位/拟稿人） → 日期 → 空行 → 正文
+  // 发言信息居中，不走落款的空格对齐
+  if (titleEndIdx >= 0) {
+    let fwdLineCharCount = 28
+    try {
+      fwdLineCharCount = calcLineCharCount(doc, settings)
+    } catch (e) { }
+
+    // 从标题后一行开始，前向寻找日期（最多看5行）
+    const maxLookAhead = 5
+    let fwdDateIdx = -1
+    for (let i = titleEndIdx + 1; i <= Math.min(titleEndIdx + maxLookAhead, total - 1); i++) {
+      if (!textMap.has(i)) continue
+      const text = textMap.get(i).text
+      if (datePattern.test(text)) {
+        fwdDateIdx = i
+        break
+      }
+      // 遇到满行正文，说明已进入正文区域，停止
+      if (measureWidth(text) >= fwdLineCharCount * 0.75) break
+    }
+
+    if (fwdDateIdx >= 0) {
+      // 标题后的日期属于发言信息，居中格式化，不走落款空格对齐
+      claim(fwdDateIdx, 'authorInfo')
+      // 从日期向上收集发言信息（最多2行）
+      let aiCollected = 0
+      for (let i = fwdDateIdx - 1; i > titleEndIdx && aiCollected < 2; i--) {
+        if (!textMap.has(i)) continue
+        const text = textMap.get(i).text
+        if (isClosingFormula(text)) break
+        if (measureWidth(text) >= fwdLineCharCount * 0.75) break
+        claim(i, 'authorInfo')
+        aiCollected++
+      }
+    }
+  }
+
   let changed = true
   while (changed) {
     changed = false
@@ -308,59 +369,61 @@ export function detectElements(doc) {
       const sp = rule.special || {}
       const detectSpec = rule.detect
 
-      // sig+date 是一组特殊逻辑：从文末向上找日期，再向上收集落款
+      // sig+date 重写：日期只看最后一行，落款从日期向上最多2~3行
       if (sp.region === 'footer' && sp.scanDirection === 'reverse') {
-        if (rule.type === 'date') {
-          // 日期只认领一次
-          const alreadyDate = result.some(el => el.type === 'date')
-          if (alreadyDate) continue
+        // 只在 date 规则时执行一次（sig+date 一起处理）
+        if (rule.type !== 'date') continue
+        const alreadyDate = result.some(el => el.type === 'date')
+        if (alreadyDate) continue
 
-          const floor = footerFloor()
-          const revIndices = [...indices].reverse()
-          let dateIdx = -1
+        const indices = remainingIndices()
+        if (indices.length === 0) continue
+        const floor = footerFloor()
 
-          for (const idx of revIndices) {
-            const t = textMap.get(idx).text
-            if (matchDetect(t, detectSpec)) {
-              if (idx < floor) break
-              dateIdx = idx
-            }
-            break  // 只看最后一个未认领位置
-          }
+        // 计算行宽（用于"不满一行"判断）
+        let lineCharCount = 28
+        try {
+          lineCharCount = calcLineCharCount(doc, settings)
+        } catch (e) { }
 
-          if (dateIdx >= 0) {
-            claim(dateIdx, 'date')
-            changed = true
-          }
-        } else if (rule.type === 'sig') {
-          // 落款：从日期向上收集
-          const dateEl = result.find(r => r.type === 'date')
-          if (!dateEl) continue
-
-          const dateIdx = baseTxt.findIndex(b => b.start === dateEl.start && b.end === dateEl.end)
-          if (dateIdx < 0) continue
-
-          const floor = footerFloor()
-          let collected = 0
-          let nonEmpty = 0
-          let cur = dateIdx - 1
-          const maxLines = sp.maxLines || 2
-
-          while (cur >= floor && collected < maxLines && nonEmpty < 6) {
-            if (!textMap.has(cur)) {
-              if (collected > 0) break
-              cur--
-              continue
-            }
-            nonEmpty++
-            const t = textMap.get(cur).text
-            if (isTitleLike(t) && !isSpeechSignature(t)) break
-            claim(cur, 'sig')
-            collected++
-            changed = true
-            cur--
+        // 日期：只检测最后一行
+        const lastIdx = indices[indices.length - 1]
+        let dateIdx = -1
+        if (lastIdx >= floor && textMap.has(lastIdx)) {
+          const lastText = textMap.get(lastIdx).text
+          if (datePattern.test(lastText)) {
+            dateIdx = lastIdx
           }
         }
+
+        if (dateIdx >= 0) {
+          claim(dateIdx, 'date')
+          changed = true
+        }
+
+        // 落款：从日期（或最后一行）向上收集
+        const startIdx = dateIdx >= 0 ? dateIdx - 1 : lastIdx
+        const maxSigLines = dateIdx >= 0 ? 2 : 3
+        let collected = 0
+        let cur = startIdx
+
+        while (cur >= floor && collected < maxSigLines) {
+          if (!textMap.has(cur)) {
+            // 跳过空行/已认领行
+            cur--
+            continue
+          }
+          const t = textMap.get(cur).text
+          // 结尾客套语中断
+          if (isClosingFormula(t)) break
+          // 满行正文中断（宽度 ≥ 行宽 75%）
+          if (measureWidth(t) >= lineCharCount * 0.75) break
+          claim(cur, 'sig')
+          collected++
+          changed = true
+          cur--
+        }
+
         continue
       }
 

@@ -27,6 +27,11 @@ const router = createRouter({
       path: '/formatpanel',
       name: '排版微调',
       component: () => import('../components/FormatPanel.vue')
+    },
+    {
+      path: '/memory',
+      name: '记忆管理',
+      component: () => import('../components/MemoryPanel.vue')
     }
   ]
 })

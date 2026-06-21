@@ -24,6 +24,7 @@
               <div class="element-row">
                 <div
                   class="element-text"
+                  :class="{ 'text-muted': item.matched === false }"
                   contenteditable="true"
                   spellcheck="false"
                   :data-idx="item.start"
@@ -79,7 +80,7 @@ const TYPE_LABELS = {
   docNumber: '文号',
   title: '标题',
   subtitle: '副标',
-  signature: '署名',
+  authorInfo: '发言',
   addressee: '抬头',
   attachment: '附件',
   h1: '一标',
@@ -98,7 +99,7 @@ const ALL_TYPES = [
   { key: 'h1', label: '一标' },
   { key: 'h2', label: '二标' },
   { key: 'h3', label: '三标' },
-  { key: 'signature', label: '署名' },
+  { key: 'authorInfo', label: '发言人' },
   { key: 'sig', label: '落款' },
   { key: 'date', label: '日期' }
 ]
@@ -115,9 +116,9 @@ function getAvailableTypes(currentType) {
 }
 
 const GROUP_ORDER = [
-  { key: 'head', label: '公文头部', types: ['docNumber', 'title', 'subtitle', 'addressee', 'attachment'] },
+  { key: 'head', label: '公文头部', types: ['docNumber', 'title', 'subtitle', 'addressee', 'attachment', 'authorInfo'] },
   { key: 'body', label: '正文标题', types: ['h1', 'h2', 'h3'] },
-  { key: 'footer', label: '落款区', types: ['signature', 'sig', 'date'] }
+  { key: 'footer', label: '落款区', types: ['sig', 'date'] }
 ]
 
 export default {
@@ -438,6 +439,7 @@ export default {
 .item-h2         { border-left-color: #7986cb; }
 .item-h3         { border-left-color: #9fa8da; }
 .item-signature  { border-left-color: #ef5350; }
+.item-authorInfo { border-left-color: #ff9800; }
 .item-sig        { border-left-color: #e57373; }
 .item-date       { border-left-color: #f44336; }
 
@@ -483,6 +485,10 @@ export default {
 .item-h3 .element-text {
   padding-left: 16px;
 }
+/* 不匹配规则的元素文字变灰 */
+.text-muted {
+  color: #bbb;
+}
 
 /* === 类型标签 === */
 .type-badge {
@@ -510,6 +516,7 @@ export default {
 .badge-h2         { background: #7986cb; }
 .badge-h3         { background: #9fa8da; }
 .badge-signature  { background: #ef5350; }
+.badge-authorInfo { background: #ff9800; }
 .badge-sig        { background: #e57373; }
 .badge-date       { background: #f44336; }
 

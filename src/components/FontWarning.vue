@@ -21,7 +21,9 @@
     </div>
 
     <div class="btn-group">
+      <button class="btn btn-keep" @click="keepOriginal">保持原状</button>
       <button class="btn btn-confirm" @click="confirm">确认</button>
+      <button class="btn btn-dismiss" @click="dismissForever">不再提醒</button>
     </div>
   </div>
 </template>
@@ -48,7 +50,17 @@ export default {
     const builtInFonts = ref([])
 
     onMounted(() => {
-      const pending = window.__fontDialogPending
+      // 从 PluginStorage 读取缺失字体数据（ShowDialog 是独立窗口，不共享主窗口的 window）
+      let pending = null
+      try {
+        const storage = window.Application.PluginStorage
+        const raw = storage.getItem('__fontDialogPending')
+        if (raw) {
+          pending = JSON.parse(raw)
+          storage.removeItem('__fontDialogPending')
+        }
+      } catch (e) { }
+
       if (!pending || !pending.missingFonts || pending.missingFonts.length === 0) {
         fontItems.push({
           name: '（无缺失字体）',
@@ -90,14 +102,36 @@ export default {
       for (const item of fontItems) {
         result[item.name] = item.selected
       }
-      window.__fontDialogResult = {
-        replacements: result,
-        saveFuture: saveFuture.value
-      }
+      // 通过 PluginStorage 写回结果（ShowDialog 是独立窗口，不共享主窗口的 window）
+      try {
+        const storage = window.Application.PluginStorage
+        storage.setItem('__fontDialogResult', JSON.stringify({
+          replacements: result,
+          saveFuture: saveFuture.value
+        }))
+      } catch (e) { }
       try { window.close() } catch (e) { }
     }
 
-    return { fontItems, saveFuture, confirm }
+    function keepOriginal() {
+      // 保持原状：不做任何替换，直接关闭
+      try {
+        const storage = window.Application.PluginStorage
+        storage.setItem('__fontDialogResult', JSON.stringify({ replacements: {} }))
+      } catch (e) { }
+      try { window.close() } catch (e) { }
+    }
+
+    function dismissForever() {
+      // 不再提醒：设置 disableFontWarning 标志
+      try {
+        const storage = window.Application.PluginStorage
+        storage.setItem('__fontDialogResult', JSON.stringify({ disableFontWarning: true }))
+      } catch (e) { }
+      try { window.close() } catch (e) { }
+    }
+
+    return { fontItems, saveFuture, confirm, keepOriginal, dismissForever }
   }
 }
 </script>
@@ -185,9 +219,23 @@ export default {
 .btn-group {
   display: flex;
   justify-content: center;
+  gap: 10px;
+}
+.btn-keep {
+  padding: 8px 16px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  background: #fff;
+  color: #333;
+  transition: background 0.2s;
+}
+.btn-keep:hover {
+  background: #f0f0f0;
 }
 .btn-confirm {
-  padding: 8px 40px;
+  padding: 8px 28px;
   border: none;
   border-radius: 4px;
   font-size: 14px;
@@ -198,5 +246,18 @@ export default {
 }
 .btn-confirm:hover {
   background: #a00;
+}
+.btn-dismiss {
+  padding: 8px 16px;
+  border: 1px solid #999;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  background: #fff;
+  color: #666;
+  transition: background 0.2s;
+}
+.btn-dismiss:hover {
+  background: #f0f0f0;
 }
 </style>

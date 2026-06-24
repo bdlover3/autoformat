@@ -6,7 +6,8 @@ import { detectElements, getSegmentText } from './js/detect.js'
 import { applyBodyFormat, applySpecialFormat, boldEnumerations } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
 import { removeBlankLines, splitTitleParagraph } from './js/docops.js'
-import { loadTypeMemory, recordTypeChanges } from './js/typememory.js'
+import { detectAndFormatSpeechSignature } from './js/signature.js'
+import { loadTypeMemory, recordTypeChanges, clearTypeMemory } from './js/typememory.js'
 
 //默认格式设置
 const DEFAULT_SETTINGS = {
@@ -474,6 +475,43 @@ function handlePanelMessage(msg) {
     if (panelUndo) {
       try { panelUndo.EndCustomRecord() } catch (e2) { }
     }
+  } else if (msg.type === 'runAction') {
+    // 面板按钮触发的操作：执行对应函数
+    try {
+      const actions = {
+        autoFormat: () => autoFormatDocument(),
+        undoFormat: () => undoFormatDocument(),
+        splitTitle: () => splitTitleParagraph(),
+        removeBlank: () => removeBlankLines(),
+        detectSignature: () => detectAndFormatSpeechSignature(getSettings, applySpecialFormat),
+        openSettings: () => { try { window.Application.ShowDialog(Util.GetUrlPath() + Util.GetRouterHash() + '/dialog', '调整固定格式', 400 * window.devicePixelRatio, 500 * window.devicePixelRatio, true) } catch (e) { } },
+        clearMemory: () => { clearTypeMemory() }
+      }
+      const fn = actions[msg.action]
+      if (fn) fn()
+    } catch (e) { console.warn('[handlePanelMessage] runAction failed:', e) }
+  } else if (msg.type === 'saveSettings') {
+    // 面板常用设置保存
+    try {
+      const updated = getSettings()
+      if (msg.settings) Object.assign(updated, msg.settings)
+      saveSettings(updated)
+    } catch (e) { }
+  } else if (msg.type === 'loadSettings') {
+    // 面板请求当前设置
+    try {
+      const s = getSettings()
+      if (panelBroadcastChannel) {
+        panelBroadcastChannel.postMessage({
+          type: 'loadSettings',
+          settings: {
+            enablePageNumber: s.enablePageNumber,
+            clearFormatting: s.clearFormatting,
+            autoSplitSubtitle: s.autoSplitSubtitle
+          }
+        })
+      }
+    } catch (e) { }
   } else if (msg.type === 'cancel') {
     closeFormatPanel()
     undoFormatDocument()

@@ -2,58 +2,110 @@
   <div class="panel" @click="onPanelClick">
 
     <div class="panel-body">
-      <div v-if="footerMissing" class="footer-warn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>未检测到落款或发言人，可在下方手动调整类型</span>
+
+      <!-- ═══ 一键排版区 ═══ -->
+      <div class="panel-section section-format">
+        <div class="section-header" @click="toggleSection('format')">
+          <span class="section-arrow" :class="{ collapsed: sections.format }">&#9654;</span>
+          <span class="section-title">一键排版</span>
+        </div>
+        <div class="section-body" v-show="!sections.format">
+          <button class="mini-btn" @click="runAutoFormat">一键排版</button>
+          <button class="mini-btn" @click="runUndoFormat">撤销排版</button>
+          <button class="mini-btn" @click="runSplitTitle">标题后换行</button>
+          <button class="mini-btn" @click="runRemoveBlank">删除空行</button>
+        </div>
       </div>
-      <template v-if="sortedElements.length > 0">
-        <div
-          v-for="(group, gIdx) in groupedElements"
-          :key="gIdx"
-          class="element-group"
-        >
-          <div class="group-header" @click="toggleGroup(group.key)">
-            <span class="group-arrow" :class="{ collapsed: collapsedGroups[group.key] }">&#9654;</span>
-            <span class="group-label">{{ group.label }}</span>
-            <span class="group-count">{{ group.items.length }}</span>
+
+      <!-- ═══ 格式微调区 ═══ -->
+      <div class="panel-section section-tune">
+        <div class="section-header" @click="toggleSection('tune')">
+          <span class="section-arrow" :class="{ collapsed: sections.tune }">&#9654;</span>
+          <span class="section-title">格式微调</span>
+          <span class="section-count" v-if="sortedElements.length">{{ sortedElements.length }}</span>
+        </div>
+        <div class="section-body" v-show="!sections.tune">
+          <div v-if="footerMissing" class="footer-warn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>未检测到落款或发言人，可在下方手动调整类型</span>
           </div>
-          <div class="group-items" v-show="!collapsedGroups[group.key]">
+          <template v-if="sortedElements.length > 0">
             <div
-              v-for="item in group.items"
-              :key="item.start"
-              class="element-item"
-              :class="'item-' + item.type"
-              @click="navigateToItem(item)"
+              v-for="(group, gIdx) in groupedElements"
+              :key="gIdx"
+              class="element-group"
             >
-              <div class="element-row">
+              <div class="group-header" @click="toggleGroup(group.key)">
+                <span class="group-arrow" :class="{ collapsed: collapsedGroups[group.key] }">&#9654;</span>
+                <span class="group-label">{{ group.label }}</span>
+                <span class="group-count">{{ group.items.length }}</span>
+              </div>
+              <div class="group-items" v-show="!collapsedGroups[group.key]">
                 <div
-                  class="element-text"
-                  :class="{ 'text-muted': item.matched === false }"
-                  contenteditable="true"
-                  spellcheck="false"
-                  :data-idx="item.start"
-                  @input="onTextChanged($event, item)"
-                  @blur="onBlur"
-                >{{ item.text }}</div>
-                <div
-                  v-if="getInvalidTail(item)"
-                  class="invalid-tail"
-                  :title="'文档中不匹配，将变回正文格式'"
-                >{{ getInvalidTail(item) }}</div>
-                <span
-                  class="type-badge"
-                  :class="'badge-' + item.type"
-                  @click.stop="onBadgeClick($event, item)"
-                >{{ typeLabel(item.type) }}</span>
+                  v-for="item in group.items"
+                  :key="item.start"
+                  class="element-item"
+                  :class="'item-' + item.type"
+                  @click="navigateToItem(item)"
+                >
+                  <div class="element-row">
+                    <div
+                      class="element-text"
+                      :class="{ 'text-muted': item.matched === false }"
+                      contenteditable="true"
+                      spellcheck="false"
+                      :data-idx="item.start"
+                      @input="onTextChanged($event, item)"
+                      @blur="onBlur"
+                    >{{ item.text }}</div>
+                    <div
+                      v-if="getInvalidTail(item)"
+                      class="invalid-tail"
+                      :title="'文档中不匹配，将变回正文格式'"
+                    >{{ getInvalidTail(item) }}</div>
+                    <span
+                      class="type-badge"
+                      :class="'badge-' + item.type"
+                      @click.stop="onBadgeClick($event, item)"
+                    >{{ typeLabel(item.type) }}</span>
+                  </div>
+                </div>
               </div>
             </div>
+          </template>
+          <div v-else class="empty-hint">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="#bbb" stroke-width="1.5"/><path d="M9 14l2 2 4-4" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>未检测到特殊元素</span>
           </div>
         </div>
-      </template>
-      <div v-else class="empty-hint">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="#bbb" stroke-width="1.5"/><path d="M9 14l2 2 4-4" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>未检测到特殊元素</span>
       </div>
+
+      <!-- ═══ 常用设置区 ═══ -->
+      <div class="panel-section section-common">
+        <div class="section-header" @click="toggleSection('common')">
+          <span class="section-arrow" :class="{ collapsed: sections.common }">&#9654;</span>
+          <span class="section-title">常用设置</span>
+        </div>
+        <div class="section-body" v-show="!sections.common">
+          <label class="setting-row"><input type="checkbox" v-model="commonSettings.enablePageNumber" @change="saveCommonSettings">启用页码</label>
+          <label class="setting-row"><input type="checkbox" v-model="commonSettings.clearFormatting" @change="saveCommonSettings">先清除格式</label>
+          <label class="setting-row"><input type="checkbox" v-model="commonSettings.autoSplitSubtitle" @change="saveCommonSettings">标题后自动换行</label>
+        </div>
+      </div>
+
+      <!-- ═══ 功能设置区 ═══ -->
+      <div class="panel-section section-func">
+        <div class="section-header" @click="toggleSection('func')">
+          <span class="section-arrow" :class="{ collapsed: sections.func }">&#9654;</span>
+          <span class="section-title">功能设置</span>
+        </div>
+        <div class="section-body" v-show="!sections.func">
+          <button class="mini-btn" @click="runDetectSignature">检测发言人</button>
+          <button class="mini-btn" @click="openFullSettings">完整设置</button>
+          <button class="mini-btn" @click="clearTypeMemory">清空记忆</button>
+        </div>
+      </div>
+
     </div>
 
     <!-- 修改类型的右键/选中菜单 -->
@@ -138,6 +190,43 @@ export default {
     const elements = ref([])
     const footerMissing = ref(false)
     const collapsedGroups = reactive({})
+    // 四区分组折叠状态（默认展开）
+    const sections = reactive({ format: false, tune: false, common: false, func: false })
+    function toggleSection(key) { sections[key] = !sections[key] }
+    // 常用设置（从主线程读/写）
+    const commonSettings = reactive({
+      enablePageNumber: true,
+      clearFormatting: true,
+      autoSplitSubtitle: false
+    })
+    // 一键排版区按钮：通过 BroadcastChannel 通知主线程执行
+    function runAutoFormat() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'autoFormat' }) } catch (e) { }
+    }
+    function runUndoFormat() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'undoFormat' }) } catch (e) { }
+    }
+    function runSplitTitle() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'splitTitle' }) } catch (e) { }
+    }
+    function runRemoveBlank() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'removeBlank' }) } catch (e) { }
+    }
+    function runDetectSignature() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'detectSignature' }) } catch (e) { }
+    }
+    function openFullSettings() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'openSettings' }) } catch (e) { }
+    }
+    function clearTypeMemory() {
+      try { if (bc) bc.postMessage({ type: 'runAction', action: 'clearMemory' }) } catch (e) { }
+    }
+    // 常用设置读写：通过 BroadcastChannel 和主线程同步
+    function saveCommonSettings() {
+      try { if (bc) bc.postMessage({ type: 'saveSettings', settings: { ...commonSettings } }) } catch (e) { }
+    }
+    // 收到主线程推送的设置时填充
+    // 在 bc.onmessage 里加 loadSettings 分支
     const contextMenu = reactive({
       visible: false,
       x: 0,
@@ -166,6 +255,8 @@ export default {
             //主线程响应 hello 推送的初始数据（含 footerMissing 标志）
             elements.value = JSON.parse(JSON.stringify(msg.elements))
             footerMissing.value = !!msg.footerMissing
+          } else if (msg && msg.type === 'loadSettings' && msg.settings) {
+            Object.assign(commonSettings, msg.settings)
           } else if (msg && msg.type === 'updateElements' && Array.isArray(msg.elements)) {
             //apply 后主线程推回的最新位置/类型
             elements.value = JSON.parse(JSON.stringify(msg.elements))
@@ -179,6 +270,7 @@ export default {
       try {
         if (bc) {
           bc.postMessage({ type: 'hello' })
+          bc.postMessage({ type: 'loadSettings' })
         }
       } catch (e) {
         console.warn('[FormatPanel] hello send failed:', e)
@@ -357,6 +449,17 @@ export default {
       changeType,
       getInvalidTail,
       navigateToItem,
+      sections,
+      toggleSection,
+      commonSettings,
+      saveCommonSettings,
+      runAutoFormat,
+      runUndoFormat,
+      runSplitTitle,
+      runRemoveBlank,
+      runDetectSignature,
+      openFullSettings,
+      clearTypeMemory,
       closePanel,
       cancel
     }
@@ -620,6 +723,72 @@ export default {
   line-height: 1.4;
   word-break: break-all;
   font-style: italic;
+}
+
+/* === 分区 === */
+.panel-section {
+  border-bottom: 1px solid #f0f0f0;
+}
+.panel-section:last-child { border-bottom: none; }
+.section-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: #fafafa;
+}
+.section-header:hover { background: #f0f0f0; }
+.section-arrow {
+  font-size: 8px;
+  color: #999;
+  margin-right: 6px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.section-arrow.collapsed { transform: rotate(0deg); }
+.section-arrow:not(.collapsed) { transform: rotate(90deg); }
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
+  flex: 1;
+}
+.section-body {
+  padding: 6px 12px;
+}
+/* 小按钮 */
+.mini-btn {
+  display: inline-block;
+  padding: 4px 10px;
+  margin: 2px 4px 2px 0;
+  border: 1px solid #d9d9d9;
+  border-radius: 3px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #fff;
+  color: #333;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.mini-btn:hover {
+  border-color: #4096ff;
+  color: #4096ff;
+}
+/* 设置行 */
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #333;
+  cursor: pointer;
+}
+.setting-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
 }
 
 /* === 空状态 === */

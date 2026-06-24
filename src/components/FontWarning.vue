@@ -29,7 +29,7 @@
 </template>
 
 <script>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 
 function getBuiltInFonts() {
   const fonts = []
@@ -49,18 +49,16 @@ export default {
     const fontItems = reactive([])
     const builtInFonts = ref([])
 
-    onMounted(() => {
-      // 从 PluginStorage 读取缺失字体数据（ShowDialog 是独立窗口，不共享主窗口的 window）
-      let pending = null
-      try {
-        const storage = window.Application.PluginStorage
-        const raw = storage.getItem('__fontDialogPending')
-        if (raw) {
-          pending = JSON.parse(raw)
-          storage.removeItem('__fontDialogPending')
-        }
-      } catch (e) { }
+    //BroadcastChannel 用于对话框↔主线程即时通讯（替代 PluginStorage）
+    let bc = null
+    try {
+      bc = new BroadcastChannel('wps_font_warning')
+    } catch (e) {
+      console.warn('[FontWarning] BroadcastChannel 不可用', e)
+    }
 
+    //收到主线程推送的缺失字体数据后填充列表
+    function applyPending(pending) {
       if (!pending || !pending.missingFonts || pending.missingFonts.length === 0) {
         fontItems.push({
           name: '（无缺失字体）',
@@ -69,22 +67,17 @@ export default {
         })
         return
       }
-
       builtInFonts.value = getBuiltInFonts()
-
       const commonFallbacks = [
         '宋体', '仿宋', '楷体', '黑体',
         'Microsoft YaHei', 'SimSun', 'FangSong', 'KaiTi',
         'Arial', 'Times New Roman'
       ]
-
       for (const font of pending.missingFonts) {
         const opts = new Set([font.fallback])
-        // Add available built-in fonts
         for (const bf of builtInFonts.value) {
           opts.add(bf)
         }
-        // Also add common fallbacks
         for (const cf of commonFallbacks) {
           opts.add(cf)
         }
@@ -95,6 +88,28 @@ export default {
           options: Array.from(opts)
         })
       }
+    }
+
+    onMounted(() => {
+      //挂载后主动发 hello，主线程收到即推送 missingFonts（不再用 PluginStorage）
+      if (bc) {
+        bc.onmessage = (event) => {
+          try {
+            const msg = event.data
+            if (msg && msg.type === 'init' && msg.missingFonts) {
+              applyPending({ missingFonts: msg.missingFonts })
+            }
+          } catch (e) { }
+        }
+        try { bc.postMessage({ type: 'hello' }) } catch (e) { }
+      }
+    })
+
+    onUnmounted(() => {
+      if (bc) {
+        try { bc.close() } catch (e) { }
+        bc = null
+      }
     })
 
     function confirm() {
@@ -102,31 +117,43 @@ export default {
       for (const item of fontItems) {
         result[item.name] = item.selected
       }
-      // 通过 PluginStorage 写回结果（ShowDialog 是独立窗口，不共享主窗口的 window）
+      //通过 BroadcastChannel 即时把结果发回主线程
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__fontDialogResult', JSON.stringify({
-          replacements: result,
-          saveFuture: saveFuture.value
-        }))
+        if (bc) {
+          bc.postMessage({
+            type: 'result',
+            result: {
+              replacements: result,
+              saveFuture: saveFuture.value
+            }
+          })
+        }
       } catch (e) { }
       try { window.close() } catch (e) { }
     }
 
     function keepOriginal() {
-      // 保持原状：不做任何替换，直接关闭
+      //保持原状：不做任何替换，直接关闭
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__fontDialogResult', JSON.stringify({ replacements: {} }))
+        if (bc) {
+          bc.postMessage({
+            type: 'result',
+            result: { replacements: {} }
+          })
+        }
       } catch (e) { }
       try { window.close() } catch (e) { }
     }
 
     function dismissForever() {
-      // 不再提醒：设置 disableFontWarning 标志
+      //不再提醒：设置 disableFontWarning 标志
       try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__fontDialogResult', JSON.stringify({ disableFontWarning: true }))
+        if (bc) {
+          bc.postMessage({
+            type: 'result',
+            result: { disableFontWarning: true }
+          })
+        }
       } catch (e) { }
       try { window.close() } catch (e) { }
     }

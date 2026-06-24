@@ -104,13 +104,21 @@ export function applyBodyFormat(doc, settings, getAvailableFont) {
 }
 
 /**
- * 特殊元素精准覆盖格式
- * 先重置为正文格式再覆盖，确保从任意类型切换时旧格式不留残留
- * 使用完整段落范围（含段落标记）设置段落格式，确保 Alignment/Indent 正确生效
+ * 特殊元素精准覆盖格式（遵循 AGENTS.md "核心工作思路" 第4条）。
+ *
+ * 用 doc.Range(start, start+length) 精准框出元素区域，按 formatSpec 施加格式。
+ * **不扩回整段**：不再对整段刷格式。
+ *   —— 这是修"（一）建立XXXX 整段被刷成 h2"bug 的关键不变量。
+ *
+ * 段落格式属性（Alignment / Indent）需段落标记才能生效：用指针定位所在段落后，
+ * 只设段落属性（段落属性无法只作用于区间，必须整段）；字体属性只作用于
+ * [start, start+length] 区间。
+ *
  * @param {Object} doc
  * @param {Object} settings
- * @param {Array} elements 特殊要素列表
+ * @param {Array} elements 指针集合 [{ start, length, type, ... }]
  * @param {Function} getAvailableFont
+ * @returns {Array} sig+date 位置更新信息（供调用方同步指针）
  */
 export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
   if (!Array.isArray(elements) || elements.length === 0) return []
@@ -128,7 +136,7 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
   const sigGroup = []
 
   for (const el of elements) {
-    if (!el || typeof el.start !== 'number' || typeof el.end !== 'number') continue
+    if (!el || typeof el.start !== 'number' || typeof el.length !== 'number') continue
 
     // sig+date 统一走字符宽度对齐
     if (el.type === 'sig' || el.type === 'date') {
@@ -136,20 +144,37 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
       continue
     }
 
-    // 获取完整段落范围（含段落标记），段落格式属性需要段落标记才能正确生效
-    let fullParaRange = null
+    const segStart = el.start
+    const segEnd = el.start + el.length  // 不含段尾 \r
+
+    // 取元素区段文本（用于核对是否仍匹配规则）
     let elText = ''
+    let segRange = null
     try {
-      const elRange = doc.Range(el.start, el.end - 1)
-      elText = elRange.Text.replace(/[\r\n]+$/, '').trim()
-      fullParaRange = elRange.Paragraphs.Item(1).Range
+      segRange = doc.Range(segStart, segEnd)
+      elText = segRange.Text.replace(/[\r\n]+$/, '').trim()
     } catch (e) { continue }
 
-    // 先重置为正文格式，清除旧格式残留
+    // 定位所在段落（用于设段落格式属性：Alignment / Indent）
+    // 段落属性必须作用于含段落标记的完整段落才能生效。
+    // 跨段指针（标题续行合并）：segRange 跨多段，需对所有段都设段落格式，
+    // 否则续行段保留 applyBodyFormat 刷的正文缩进，第二行标题变成正文缩进。
+    let paraRanges = []
+    try {
+      const paras = segRange.Paragraphs
+      const pCount = paras.Count
+      for (let pi = 1; pi <= pCount; pi++) {
+        paraRanges.push(paras.Item(pi).Range)
+      }
+    } catch (e) { }
+
+    // 先重置所有相关段为正文格式（清除旧格式残留）
     if (bodyRule && bodyRule.formatSpec) {
-      try {
-        applyFormatSpec(fullParaRange, bodyRule.formatSpec, settings, fonts)
-      } catch (e) { }
+      for (const pr of paraRanges) {
+        try {
+          applyFormatSpec(pr, bodyRule.formatSpec, settings, fonts)
+        } catch (e) { }
+      }
     }
 
     // 核对当前文本是否仍匹配该类型规则
@@ -158,16 +183,37 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
       const detectSpec = rule.detect
       const matched = detectSpec ? matchDetect(elText, detectSpec) : true
       if (matched) {
-        // 匹配：正常应用规则格式
+        // 段落格式属性（Alignment / Indent）作用于所有相关段（跨段指针时含续行段）
+        for (const pr of paraRanges) {
+          try {
+            if (rule.formatSpec.alignment && ALIGN_MAP[rule.formatSpec.alignment] != null) {
+              pr.ParagraphFormat.Alignment = ALIGN_MAP[rule.formatSpec.alignment]
+            }
+            if (rule.formatSpec.firstIndent != null) {
+              pr.ParagraphFormat.CharacterUnitFirstLineIndent = rule.formatSpec.firstIndent
+              pr.ParagraphFormat.FirstLineIndent = 0
+            }
+          } catch (e) { }
+        }
+        // 字体属性只作用于 [segStart, segEnd] 区间（精准，不扩段）
         try {
-          applyFormatSpec(fullParaRange, rule.formatSpec, settings, fonts)
+          const fontName = fonts[rule.formatSpec.fontKey] || fonts.bodyFontName
+          segRange.Font.Name = fontName
+          segRange.Font.Bold = !!rule.formatSpec.bold
+          segRange.Font.NameAscii = 'Times New Roman'
+          segRange.Font.NameOther = 'Times New Roman'
+          if (rule.formatSpec.fontSizeKey && settings[rule.formatSpec.fontSizeKey] != null) {
+            segRange.Font.Size = settings[rule.formatSpec.fontSizeKey]
+          }
         } catch (e) { }
       } else {
         // 不匹配：正文格式（无缩进）
-        try {
-          fullParaRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-          fullParaRange.ParagraphFormat.FirstLineIndent = 0
-        } catch (e) { }
+        for (const pr of paraRanges) {
+          try {
+            pr.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+            pr.ParagraphFormat.FirstLineIndent = 0
+          } catch (e) { }
+        }
         el.matched = false
       }
     }
@@ -194,14 +240,14 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
 
   const lines = []
   for (const el of sigGroup) {
-    if (typeof el.start !== 'number' || typeof el.end !== 'number') continue
+    if (typeof el.start !== 'number' || typeof el.length !== 'number') continue
 
-    // 用 start/end 定位段落，不依赖 paraIndex
+    // 用 start/length 定位段落，不依赖 paraIndex
     let raw = ''
     let paraStart = 0
     let paraEnd = 0
     try {
-      const rng = doc.Range(el.start, el.end - 1)
+      const rng = doc.Range(el.start, el.start + el.length)
       raw = rng.Text.replace(/[\r\n]+$/, '').replace(/\s+$/, '')
       // 获取段落对象以设置格式属性
       const para = rng.Paragraphs.Item(1)
@@ -213,7 +259,7 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
 
     //优先使用面板编辑后的 text
     const editedText = (el.text == null) ? raw : String(el.text).replace(/[\r\n]+$/, '').replace(/\s+$/, '')
-    lines.push({ start: el.start, end: el.end, paraStart, paraEnd, text: editedText })
+    lines.push({ start: el.start, length: el.length, paraStart, paraEnd, text: editedText })
   }
   lines.sort((a, b) => a.start - b.start)
 
@@ -232,22 +278,21 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
     line.width = measureWidth(line.text)
     if (line.width > maxW) maxW = line.width
   }
+  //整体右对齐：最长行的右边界贴行尾，baseLeft = 行宽 - 最长行宽度
+  //所有行用同样的前导空格数，彼此左对齐（公文落款标准：行首对齐，整体靠右）
   const baseLeft = Math.max(0, lineCharCount - maxW)
 
-  //用前导空格实现右对齐（LeftIndent 无法表达半字符偏移，空格是唯一可靠方式）
-  //返回位置更新信息，供调用方同步 start/end
+  //用半角空格实现前导缩进（半角空格宽度约0.5半字符单位）
+  //padW 是半字符单位宽度，半角空格数 = padW / 0.5 = padW * 2
   //逆序处理：从文档末尾往前写，避免前导空格插入导致后续行字符位置偏移
   const posUpdates = []
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
-    const padW = baseLeft + (maxW - line.width) / 2
-    // padW 是半字符单位宽度，转为全角空格数需 /2（每个全角空格宽度=2半字符）
-    const fullSpaces = Math.floor(padW / 2)
-    const frac = padW / 2 - fullSpaces  // 剩余半字符单位（0~1）
-    const halfSpace = frac > 0.25  // 剩余超过0.25个半字符时补一个半角空格
+    // 所有行同样的前导空格，彼此左对齐
+    const padW = baseLeft
+    const halfSpaces = Math.round(padW * 2)  // 半角空格数
     let spaces = ''
-    for (let j = 0; j < fullSpaces; j++) spaces += '\u3000'  // 全角空格
-    if (halfSpace) spaces += ' '  // 半角空格补齐
+    for (let j = 0; j < halfSpaces; j++) spaces += ' '  // 半角空格
     try {
       const rng = doc.Range(line.paraStart, line.paraEnd - 1)
       rng.ParagraphFormat.Alignment = 0  // 左对齐（空格控制缩进）
@@ -259,7 +304,7 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
       rng.Text = spaces + cleanText
       // 写回后位置可能变化，返回更新
       const newPara = rng.Paragraphs.Item(1)
-      posUpdates.push({ oldStart: line.start, newStart: newPara.Range.Start, newEnd: newPara.Range.End })
+      posUpdates.push({ oldStart: line.start, newStart: newPara.Range.Start, newLength: newPara.Range.End - newPara.Range.Start })
     } catch (e) { }
   }
   return posUpdates

@@ -2,6 +2,10 @@
   <div class="panel" @click="onPanelClick">
 
     <div class="panel-body">
+      <div v-if="footerMissing" class="footer-warn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>未检测到落款或发言人，可在下方手动调整类型</span>
+      </div>
       <template v-if="sortedElements.length > 0">
         <div
           v-for="(group, gIdx) in groupedElements"
@@ -31,6 +35,11 @@
                   @input="onTextChanged($event, item)"
                   @blur="onBlur"
                 >{{ item.text }}</div>
+                <div
+                  v-if="getInvalidTail(item)"
+                  class="invalid-tail"
+                  :title="'文档中不匹配，将变回正文格式'"
+                >{{ getInvalidTail(item) }}</div>
                 <span
                   class="type-badge"
                   :class="'badge-' + item.type"
@@ -104,13 +113,15 @@ const ALL_TYPES = [
   { key: 'date', label: '日期' }
 ]
 
-//落款/日期只能由检测自动识别，面板仅允许 sig↔date 互转，不能从其他类型转入
+//落款/日期只能由检测自动识别，面板"调整为"菜单：
+//  落款区元素可互转 sig↔date，或选"不是落款"转回正文（body）
 const FOOTER_TYPES = ['sig', 'date']
 const NON_FOOTER_TYPES = ALL_TYPES.map(t => t.key).filter(k => !FOOTER_TYPES.includes(k))
 
 function getAvailableTypes(currentType) {
   if (FOOTER_TYPES.includes(currentType)) {
-    return ALL_TYPES.filter(t => FOOTER_TYPES.includes(t.key))
+    // 落款区：互转 + "不是落款"（body）
+    return [{ key: 'sig', label: '落款' }, { key: 'date', label: '日期' }, { key: 'body', label: '不是落款' }]
   }
   return ALL_TYPES.filter(t => NON_FOOTER_TYPES.includes(t.key))
 }
@@ -125,6 +136,7 @@ export default {
   name: 'FormatPanel',
   setup() {
     const elements = ref([])
+    const footerMissing = ref(false)
     const collapsedGroups = reactive({})
     const contextMenu = reactive({
       visible: false,
@@ -150,7 +162,12 @@ export default {
       bc.onmessage = (event) => {
         try {
           const msg = event.data
-          if (msg && msg.type === 'updateElements' && Array.isArray(msg.elements)) {
+          if (msg && msg.type === 'init' && Array.isArray(msg.elements)) {
+            //主线程响应 hello 推送的初始数据（含 footerMissing 标志）
+            elements.value = JSON.parse(JSON.stringify(msg.elements))
+            footerMissing.value = !!msg.footerMissing
+          } else if (msg && msg.type === 'updateElements' && Array.isArray(msg.elements)) {
+            //apply 后主线程推回的最新位置/类型
             elements.value = JSON.parse(JSON.stringify(msg.elements))
           }
         } catch (e) { }
@@ -158,17 +175,13 @@ export default {
     }
 
     onMounted(() => {
+      //挂载后主动发 hello，主线程收到即推送初始数据（不再用 PluginStorage）
       try {
-        const storage = window.Application.PluginStorage
-        const raw = storage.getItem('__formatPanelData')
-        if (raw) {
-          const pending = JSON.parse(raw)
-          if (Array.isArray(pending.elements)) {
-            elements.value = JSON.parse(JSON.stringify(pending.elements))
-          }
+        if (bc) {
+          bc.postMessage({ type: 'hello' })
         }
       } catch (e) {
-        console.warn('[FormatPanel] PluginStorage read failed:', e)
+        console.warn('[FormatPanel] hello send failed:', e)
       }
       //点击面板外区域关闭右键菜单
       document.addEventListener('mousedown', onDocMouseDown)
@@ -226,9 +239,9 @@ export default {
     function navigateToItem(item) {
       try {
         const doc = window.Application.ActiveDocument
-        if (doc && typeof item.start === 'number' && typeof item.end === 'number') {
+        if (doc && typeof item.start === 'number' && typeof item.length === 'number') {
           //选中整段文字，WPS 会自动滚动到选中位置
-          const rng = doc.Range(item.start, item.end - 1)
+          const rng = doc.Range(item.start, item.start + item.length)
           rng.Select()
         }
       } catch (e) {
@@ -290,6 +303,13 @@ export default {
       }
     }
 
+    // 未命中尾部：text 中超出 length 的部分（面板编辑后逐字比对，不匹配的变灰提示）
+    function getInvalidTail(item) {
+      if (!item || !item.text || typeof item.length !== 'number') return ''
+      if (item.length >= item.text.length) return ''
+      return item.text.substring(item.length)
+    }
+
     function onTextChanged(event, item) {
       const el = event.target
       item.text = el.innerText || el.textContent || ''
@@ -323,6 +343,7 @@ export default {
 
     return {
       elements,
+      footerMissing,
       sortedElements,
       groupedElements,
       collapsedGroups,
@@ -334,6 +355,7 @@ export default {
       onBadgeClick,
       onPanelClick,
       changeType,
+      getInvalidTail,
       navigateToItem,
       closePanel,
       cancel
@@ -519,6 +541,7 @@ export default {
 .badge-authorInfo { background: #ff9800; }
 .badge-sig        { background: #e57373; }
 .badge-date       { background: #f44336; }
+.badge-body       { background: #bbb; }
 
 /* === 右键菜单（调整为...） === */
 .context-menu {
@@ -571,6 +594,32 @@ export default {
   height: 8px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+/* === 落款缺失提示条 === */
+.footer-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffd591;
+  color: #ad6800;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.footer-warn svg {
+  flex-shrink: 0;
+}
+
+/* === 未命中尾部灰显 === */
+.invalid-tail {
+  color: #bbb;
+  font-size: 11px;
+  padding: 2px 4px;
+  line-height: 1.4;
+  word-break: break-all;
+  font-style: italic;
 }
 
 /* === 空状态 === */

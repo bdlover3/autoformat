@@ -26,9 +26,8 @@ export function formatSpeechSignature(doc, titleEnd, settings, applySpecialForma
       const para = paragraphs.Item(i)
       collected.push({
         type: 'authorInfo',
-        text: t,
         start: para.Range.Start,
-        end: para.Range.End
+        length: para.Range.End - para.Range.Start
       })
       continue
     }

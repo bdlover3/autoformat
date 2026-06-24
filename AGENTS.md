@@ -18,6 +18,64 @@ WPS Office JS add-in (`wpsjs`) that one-click formats Chinese 公文 (official d
 - Vue routes: `/dialog`, `/fontwarning`, `/taskpane` are opened via `Application.ShowDialog` (modals). `/formatpanel` is shown in a **dynamically-created task pane** via `Application.CreateTaskPane(url)` — NOT a `<Form>` manifest element (which doesn't create a visible panel in this WPS version). `vue-router` uses **hash history** because WPS loads the bundle via `file://` (see `src/router/index.js`, `src/components/js/util.js` `GetRouterHash`). Keep `base: './'` in `vite.config.js` — absolute paths break the file:// load.
 - All other dialogs (settings `/dialog`, font warning `/fontwarning`) still use `Application.ShowDialog`. Only the format panel uses task-pane navigation.
 - `manifest.xml` is copied to the build via the `wpsjs/vite_plugins` `copyFile` plugin. Updating add-in name/description requires editing `manifest.xml` (root), not anything in `dist/`. The `<Form>` element must stay or the task pane disappears.
+## 核心工作思路
+
+整个排版系统建立在一个抽象层上，后续所有检测/格式化逻辑都遵循这套抽象。
+
+### 1. BaseTxt 是字符串，与 doc.Range 一一对应
+
+- 遍历 `doc.Paragraphs`，每段取 `para.Range.Text`（含段尾 `\r`），拼接成全文字符串 `baseTxt`。
+- WPS 段落标记是单字符 `\r`（实证：`docops.js` 写新段用 `head + '\r' + tail`），与 `doc.Range` 字符位置坐标系一致 —— `baseTxt[i]` 即 `doc.Range(i, i).Text`，无需映射表、无需换算。
+- 不 trim 首尾空格：保留原文，指针才精准。检测正则用 `^\s*` 容忍前导空格。
+- BaseTxt 是检测的**起点**，检测阶段只在这个字符串上操作，不再触碰 WPS 文档对象。
+
+### 2. 正则全文扫描找匹配区间
+
+- 在 `baseTxt` 字符串上跑正则，`regex.exec` 拿 `match.index` + `match[0].length`，识别特殊元素的字符区间。
+- 不再逐段匹配 + 续行合并。标题跨行、标题/正文同行、落款反向收集等语义判断，都用正则在全文字符串上表达。
+- 已识别的区间在后续扫描中排除（避免重复标记），具体实现方式按需选择（区间集合 / 标记位图 / 偏移跳跃）。
+
+### 3. result 是指针集合，不存文本副本
+
+- 检测产物 `result = [{ start, length, type, ... }]`，每项是一个**指针**，指向文档中某一区域。
+- `start` = 在 `baseTxt`（即 `doc.Range`）中的起始字符位置；`length` = 持续字符数。`end = start + length`，但只存 `start` + `length`，不存 `end`。
+- 不存 `text` 字段：指针与内容解耦，需要文本时实时 `doc.Range(start, start+length).Text` 取。
+- `...` 表示可按需扩展辅助字段（如 `matched` 标志、续行边界、用户编辑快照），无硬性限制，按需增加。
+
+### 4. start/length 是指向 doc 的指针，精准格式化不扩段
+
+- 格式化时 `doc.Range(start, start+length)` 精准框出该特殊元素的区域，按规则的 `formatSpec` 施加格式。
+- **不扩回整段**：不再取 `elRange.Paragraphs.Item(1).Range` 对整段刷格式。这是修"整段被刷成 h2"bug 的关键不变量 —— 检测把标题切到哪，格式化就只刷到哪。
+- 段落格式属性（Alignment / Indent）需段落标记才能生效的情况，单独处理：用指针定位所在段落后，只设段落属性，字体属性仍只作用于 `[start, start+length]` 区间。
+
+### 5. 先刷后盖
+
+1. `applyBodyFormat` —— 全文一次性刷正文格式（不跳过任何段）
+2. `applySpecialFormat` —— 遍历 result 指针集合，用 `doc.Range(start, start+length)` 精准覆盖特殊元素格式
+3. `applyFooterAlignment` —— 落款/日期走字符宽度对齐（仍用指针定位段落，但只调段落属性 + 前导空格，不动字体区间）
+
+### 6. 面板微调的是位置指针，与文章内容解耦
+
+- FormatPanel 显示的元素 = result 指针集合的可视化。用户看到的是"某位置是什么类型"，改的是"某位置该是什么类型"。
+- 改类型：修改该指针的 `type`，重新走 `applySpecialFormat` 即可，不动文本内容。
+- 改文本：用户编辑元素文字属于"改内容"，按 GB/T 9704 公文标准与本项目"只调格式不改内容"原则，面板编辑文本写回文档走单独受控路径（落款/日期空格对齐是唯一例外）。
+
+### 数据流
+
+```
+doc.Paragraphs
+     ↓ 拼接（段尾 \r，与 Range 坐标系一致）
+baseTxt = "全文纯文本字符串"   ← 与 doc.Range 字符位置一一对应
+     ↓ 正则全文扫描（regex.exec 拿 index + length）
+result = [{ start, length, type }, ...]   ← 指针集合，不存文本副本
+     ↓ applySpecialFormat
+doc.Range(start, start+length) 精准格式化，不扩段
+```
+
+### 一句话概括
+
+> 把文档抽象成与 `doc.Range` 一一对应的纯文本字符串（BaseTxt），在字符串上正则扫描出特殊元素的字符区间，用 `{start, length, type}` 指针集合记录这些区间，最后按指针精准格式化对应区域，不扩回整段。
+
 
 ## Module architecture
 
@@ -82,9 +140,13 @@ src/components/
 ## Format panel（微调面板）
 
 - `FormatPanel.vue` at route `/formatpanel`，通过 `Application.CreateTaskPane` 创建侧边面板（宽度 220px，DockPosition=0 右侧停靠）。
-- 面板与主窗口不共享 window，通过 `Application.PluginStorage` 传递数据：`__formatPanelData`（初始数据）、`__formatPanelAction`（指令：apply/cancel/close）、`__formatPanelEdits`（编辑后的元素 JSON）。
-- 主窗口每 500ms 轮询 `__formatPanelAction`。apply 时重新执行 `applyBodyFormat` + `applySpecialFormat` + `boldEnumerations`；cancel 时执行 `undoFormatDocument`；close 时仅关闭面板。
-- **防重复面板**：`openFormatPanel` 开头检查 `currentTaskPane`，若已存在先关闭旧面板并清理轮询定时器，再创建新面板。模块级变量 `currentTaskPane` 和 `currentPollTimer` 跟踪当前面板状态。
+- 面板与主窗口不共享 window，**通过 `BroadcastChannel('wps_format_panel')` 即时双向通讯**（不再使用 PluginStorage 轮询）：
+  - 面板挂载后主动发 `{type:'hello'}`，主线程 `handlePanelMessage` 收到即推送 `{type:'init', elements, footerMissing}`（初始数据 + 落款缺失标志）。
+  - 面板编辑/改类型后发 `{type:'apply', elements}`，主线程重新执行 `applyBodyFormat` + `applySpecialFormat` + `boldEnumerations`，并回推 `{type:'updateElements', elements}` 同步位置偏移。
+  - 面板发 `{type:'cancel'}` → 主线程 `undoFormatDocument`；`{type:'close'}` → 仅关闭面板。
+- **"未检测到落款或发言人"提示**：不再用 `alert` 打断，`autoFormatDocument` 检测后设置模块变量 `footerMissing`，随 `init` 消息推给面板，面板顶部渲染橙色提示条。
+- **防重复面板**：`openFormatPanel` 开头检查 `currentTaskPane`，若已存在先关闭旧面板并清理 `currentHealthTimer` 和 `panelBroadcastChannel`，再创建新面板。模块级变量 `currentTaskPane`、`currentHealthTimer`、`panelBroadcastChannel` 跟踪当前面板状态。
+- **健康检查**：`currentHealthTimer` 每 2s 一次，仅检测文档切换/关闭（不再轮询 action）；无跨窗口事件能替代此轻量定时器。
 - 12 个元素类型：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/signature/sig/date。
 
 ## 其他独立按钮

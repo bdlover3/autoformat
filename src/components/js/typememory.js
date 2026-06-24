@@ -9,6 +9,8 @@
 // 相同开始位置的多次修改，以最后一次为准
 //==============================================================
 
+import { getSegmentText } from './detect.js'
+
 /** 获取记忆文件路径 */
 function getTypeMemoryFilePath() {
   try {
@@ -68,8 +70,16 @@ export function saveTypeMemory(memory) {
  * @param {Array} oldElements 排版前的元素快照
  * @param {Array} newElements 排版后的元素列表
  */
-export function recordTypeChanges(oldElements, newElements) {
+export function recordTypeChanges(oldElements, newElements, doc) {
   if (!Array.isArray(oldElements) || !Array.isArray(newElements)) return
+  // 用 doc 取元素文本（result 不存 text，记忆键需文本）
+  const getText = (el) => {
+    if (el && typeof el.text === 'string') return el.text
+    if (el && doc && typeof el.start === 'number' && typeof el.length === 'number') {
+      return getSegmentText(doc, el.start, el.length)
+    }
+    return ''
+  }
   const memory = loadTypeMemory()
   let changed = false
 
@@ -79,27 +89,29 @@ export function recordTypeChanges(oldElements, newElements) {
   // 建立 oldElements 的 text→type 映射
   const oldMap = {}
   for (const el of oldElements) {
-    if (el && el.text && el.type) {
-      oldMap[el.text] = el.type
+    const t = getText(el)
+    if (t && el && el.type) {
+      oldMap[t] = el.type
     }
   }
 
   // 遍历新列表，检测类型变更
   for (const el of newElements) {
-    if (!el || !el.text || !el.type) continue
-    const oldType = oldMap[el.text]
+    const t = getText(el)
+    if (!t || !el || !el.type) continue
+    const oldType = oldMap[t]
     // 类型从 X 变为 Y（含新增元素）
     if (oldType !== el.type) {
       // 相同开始位置去重：删除该位置之前的旧文本映射
       if (typeof el.start === 'number') {
         const posKey = String(el.start)
         const oldText = posIndex[posKey]
-        if (oldText && oldText !== el.text && oldText in memory) {
+        if (oldText && oldText !== t && oldText in memory) {
           delete memory[oldText]
         }
-        posIndex[posKey] = el.text
+        posIndex[posKey] = t
       }
-      memory[el.text] = el.type
+      memory[t] = el.type
       changed = true
     }
   }

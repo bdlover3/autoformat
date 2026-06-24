@@ -18,20 +18,25 @@
 //--- ============================================================ ---
 
 /**
- * 检测规格 (detect) 说明：
+ * 检测规格 (detect) 说明（新版，基于正则全文扫描）：
  *
  * mode:
- *   'pattern'       - 单正则匹配，需提供 pattern 字段名
+ *   'pattern'       - 单正则全文扫描，需提供 pattern 字段名
  *   'composite'     - 组合正则（匹配任一），需提供 pattern + extraPattern
- *   'isTitleLike'   - 调用 patterns.isTitleLike()
+ *   'isTitleLike'   - 对每个候选区段调用 patterns.isTitleLike()
  *   'isSpeechSignature' - 调用 patterns.isSpeechSignature()
  *   'notTitleLike'  - 排除法：!isTitleLike(text)
- *   'patternWithNegate' - 正则匹配 + 否定约束
  *
  * pattern / extraPattern - patterns.js 中导出的正则变量名
+ *   正则在 BaseTxt 字符串上全文扫描，每处匹配产出 {start, length} 区间
+ *
+ * 标题/正文同行处理（h1/h2/h3/title）：
+ *   endSymbolPattern 用于在匹配区间内找第一个结束符号，截断到符号前
+ *   续行合并通过正则跨 \r 匹配实现（标题正则后接 [^\r]* 续行）
+ *
+ * minLength / maxLength - 区段文本长度约束
  * negateTitleLike  - 排除"像标题"的文本
  * negateSpeechSig  - 排除发言人格式的文本
- * minLength / maxLength - 文本长度约束
  *
  * 格式化规格 (formatSpec) 说明：
  *
@@ -41,23 +46,16 @@
  * firstIndent - 首行缩进（字符单位）：0 = 无缩进, 2 = 两字符
  * bold        - 是否加粗（默认 false）
  *
- * 特殊处理规格 (special) 说明：
+ * 特殊处理规格 (special) 说明（新版）：
  *
- * headSequence       - 是否头部区域顺序识别
- * contiguous         - 必须从文首连续出现
- * multiline          - 多行合并（如标题最多3行）
- * maxLines           - 多行合并的最大行数
- * afterType          - 必须紧跟在某类型之后
  * region             - 位置约束：'head' | 'footer'
- * regionOffset       - 区域范围（声明式）：
- *   from: 'titleEnd' - 基于 titleEndIdx 偏移
- *   min / max        - 偏移量
+ * regionOffset       - 区域范围（声明式）：{ from: 'titleEnd', min, max }
  * gapRequired        - 认领前是否需要空行隔开
- * scanDirection      - 扫描方向：'reverse'
- * groupWith          - 分组对齐类型
- * continuation       - 续行规格（声明式）：
- *   negatePattern       - 排除正则（匹配则不能续行）
- *   negateMode          - 排除模式：'looksLikeOtherPattern'
+ * scanDirection      - 扫描方向：'reverse'（落款/日期从文末向上）
+ * groupWith          - 分组对齐类型（sig+date 一起走 applyFooterAlignment）
+ * maxLines           - 落款向上收集的最大行数
+ * truncateAtEndSymbol - 标题/正文同行时，截断到结束符号前（h1/h2/h3/title 用）
+ * maxScanLines       - 标题跨行续行时，向下最多合并的行数
  */
 const RULES = [
 
@@ -76,6 +74,7 @@ const RULES = [
   },
 
   //--- 1. 附件 ---
+  // 从文首连续出现的 "附件..." 行
   {
     type: 'attachment',
     label: '附件',
@@ -88,7 +87,7 @@ const RULES = [
       firstIndent: 0
     },
     special: {
-      headSequence: true,
+      region: 'headStart',
       contiguous: true
     }
   },
@@ -106,11 +105,13 @@ const RULES = [
       firstIndent: 0
     },
     special: {
-      headSequence: true
+      region: 'head'
     }
   },
 
   //--- 3. 大标题 ---
+  // 标题不跟正文同行（后面不会跟内容），无需 truncateAtEndSymbol
+  // 标题可跨行（最多3行），用 isTitleLike + 续行合并
   {
     type: 'title',
     label: '标题',
@@ -123,17 +124,13 @@ const RULES = [
       firstIndent: 0
     },
     special: {
-      headSequence: true,
-      multiline: true,
-      maxLines: 3,
-      continuation: {
-        negatePattern: 'endSymbolPattern',
-        negateMode: 'looksLikeOtherPattern'
-      }
+      region: 'head',
+      maxScanLines: 3
     }
   },
 
   //--- 4. 副标题 ---
+  // 紧跟标题后的破折号开头行
   {
     type: 'subtitle',
     label: '小标题',
@@ -146,12 +143,14 @@ const RULES = [
       firstIndent: 0
     },
     special: {
-      headSequence: true,
+      region: 'head',
       afterType: 'title'
     }
   },
 
   //--- 5. 一级标题 (h1) ---
+  // "一、指导思想" 可能跟正文同行："一、指导思想。坚持以人民为中心"
+  // truncateAtEndSymbol 截断到句号前，只把标题部分认成 h1
   {
     type: 'h1',
     label: '一、',
@@ -162,6 +161,10 @@ const RULES = [
       fontSizeKey: 'h1FontSize',
       alignment: 'left',
       firstIndent: 2
+    },
+    special: {
+      truncateAtEndSymbol: true,
+      maxScanLines: 3
     }
   },
 
@@ -176,6 +179,10 @@ const RULES = [
       fontSizeKey: 'h2FontSize',
       alignment: 'left',
       firstIndent: 2
+    },
+    special: {
+      truncateAtEndSymbol: true,
+      maxScanLines: 3
     }
   },
 
@@ -190,12 +197,15 @@ const RULES = [
       fontSizeKey: 'h3FontSize',
       alignment: 'left',
       firstIndent: 2
+    },
+    special: {
+      truncateAtEndSymbol: true,
+      maxScanLines: 3
     }
   },
 
   //--- 8. 抬头 ---
-  // 抬头 = 排除头部元素（附件/文号/标题/副标题）后正文的第一行
-  // 只有一行，紧跟在最后一个头部元素之后；检测完即结束
+  // 抬头 = 以冒号结尾的行，正文第一行
   {
     type: 'addressee',
     label: '抬头',
@@ -208,7 +218,7 @@ const RULES = [
       firstIndent: 0
     },
     special: {
-      headSequence: true
+      region: 'head'
     }
   },
 
@@ -298,10 +308,7 @@ export function getTypeLabelMap() {
   return map
 }
 
-/** 获取头部顺序识别的类型列表 */
-export function getHeadSequenceTypes() {
-  return RULES
-    .filter(r => r.special && r.special.headSequence)
-    .sort((a, b) => a.priority - b.priority)
-    .map(r => r.type)
+/** 获取按优先级排序的特殊规则列表 */
+export function getOrderedSpecialRules() {
+  return getSpecialRules().slice().sort((a, b) => a.priority - b.priority)
 }

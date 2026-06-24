@@ -2,7 +2,7 @@ import Util from './js/util.js'
 import SystemDemo from './js/systemdemo.js'
 
 //模块导入
-import { detectElements } from './js/detect.js'
+import { detectElements, getSegmentText } from './js/detect.js'
 import { applyBodyFormat, applySpecialFormat, boldEnumerations } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
 import { removeBlankLines, splitTitleParagraph } from './js/docops.js'
@@ -50,9 +50,8 @@ function getSettingsFilePath() {
 //字体检测状态
 let fontWarningShownInSession = false
 
-//无落款/发言人提示状态（每个文档仅提示一次）
-let noFooterWarned = false
-let noFooterWarnedDocName = ''
+//落款/发言人是否缺失（autoFormatDocument 设置，openFormatPanel 推送给面板）
+let footerMissing = false
 
 function getSettings() {
   const result = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
@@ -225,48 +224,80 @@ function checkFontsOncePerSession() {
     }
 
     const missingFonts = checkRequiredFonts(settings)
-    if (missingFonts.length > 0) {
-      // 通过 PluginStorage 传递数据（ShowDialog 是独立窗口，不共享 window）
-      try {
-        const storage = window.Application.PluginStorage
-        storage.setItem('__fontDialogPending', JSON.stringify({ missingFonts }))
-      } catch (e) { }
-      try {
-        window.Application.ShowDialog(
-          Util.GetUrlPath() + Util.GetRouterHash() + '/fontwarning',
-          '字体缺失提醒',
-          420 * window.devicePixelRatio,
-          320 * window.devicePixelRatio,
-          true
-        )
-      } catch (e) {
-      }
-      // 从 PluginStorage 读取对话框结果
-      let result = null
-      try {
-        const storage = window.Application.PluginStorage
-        const raw = storage.getItem('__fontDialogResult')
-        if (raw) {
-          result = JSON.parse(raw)
-          storage.removeItem('__fontDialogResult')
-        }
-      } catch (e) { }
+    if (missingFonts.length === 0) {
+      return
+    }
 
-      if (result && result.disableFontWarning) {
-        // "不再提醒"：保存设置，关联设置对话框的屏蔽选项
-        const updated = getSettings()
-        updated.disableFontWarning = true
-        saveSettings(updated)
-      } else if (result && result.replacements) {
-        const updated = getSettings()
-        updated.fontReplacements = { ...(updated.fontReplacements || {}), ...result.replacements }
-        if (result.saveFuture) {
-          saveSettings(updated)
-        }
+    fontWarningShownInSession = true
+
+    //FontWarning 对话框通讯改为 BroadcastChannel 即时双向：
+    //  1. 主线程先建 channel，等对话框发 hello 后推送 missingFonts
+    //  2. 对话框选择后发 result，主线程收到即处理并关闭 channel
+    //（原实现用 ShowDialog 后立即同步读 PluginStorage，结果必然为 null ——字体替代完全失效，本处一并修复）
+    let bc = null
+    try {
+      bc = new BroadcastChannel('wps_font_warning')
+    } catch (e) {
+      console.warn('[checkFontsOncePerSession] BroadcastChannel 不可用', e)
+      return
+    }
+
+    //对话框结果到达后处理；超时兜底（对话框被用户直接关掉等情况）
+    bc.onmessage = (event) => {
+      const msg = event.data
+      if (!msg || !msg.type) return
+      if (msg.type === 'hello') {
+        //对话框挂载，推送缺失字体数据
+        try {
+          bc.postMessage({ type: 'init', missingFonts: missingFonts })
+        } catch (e) { }
+      } else if (msg.type === 'result') {
+        applyFontWarningResult(msg.result)
+        try { bc.close() } catch (e) { }
       }
-      fontWarningShownInSession = true
+    }
+
+    //超时兜底：60s 内无结果则关闭 channel（避免泄漏）
+    const timeoutId = setTimeout(() => {
+      try { bc.close() } catch (e) { }
+    }, 60000)
+    try {
+      bc.onmessage = ((orig) => (event) => {
+        const msg = event.data
+        if (msg && msg.type === 'result') { clearTimeout(timeoutId) }
+        orig(event)
+      })(bc.onmessage)
+    } catch (e) { }
+
+    try {
+      window.Application.ShowDialog(
+        Util.GetUrlPath() + Util.GetRouterHash() + '/fontwarning',
+        '字体缺失提醒',
+        420 * window.devicePixelRatio,
+        320 * window.devicePixelRatio,
+        true
+      )
+    } catch (e) {
+      try { bc.close() } catch (e2) { }
     }
   } catch (e) {
+  }
+}
+
+//处理 FontWarning 对话框返回的字体替代结果（从 checkFontsOncePerSession 拆出）
+function applyFontWarningResult(result) {
+  if (!result) return
+  if (result.disableFontWarning) {
+    //"不再提醒"：保存设置
+    const updated = getSettings()
+    updated.disableFontWarning = true
+    saveSettings(updated)
+  } else if (result.replacements) {
+    const updated = getSettings()
+    updated.fontReplacements = { ...(updated.fontReplacements || {}), ...result.replacements }
+    if (result.saveFuture) {
+      saveSettings(updated)
+    }
   }
 }
 
@@ -359,10 +390,39 @@ function closeFormatPanel() {
 }
 
 //处理面板消息（BroadcastChannel 即时接收，替代 500ms 轮询）
+//给 elements 每项补 text 快照（从 doc 实时取），面板显示用。
+//指针与内容解耦：result 不存 text，但面板跨 window 无法访问 doc，故推送时附带。
+function withTextSnapshot(elements) {
+  if (!Array.isArray(elements)) return elements
+  const doc = window.Application.ActiveDocument
+  if (!doc) return elements
+  return elements.map(el => {
+    if (!el || typeof el.start !== 'number' || typeof el.length !== 'number') return el
+    const text = getSegmentText(doc, el.start, el.length)
+    return { ...el, text }
+  })
+}
+
 function handlePanelMessage(msg) {
   if (!msg || !msg.type) return
 
   console.log('[handlePanelMessage] msg.type =', msg.type)
+
+  //面板挂载后主动请求初始数据：主线程即时推送 elements + footerMissing 标志
+  if (msg.type === 'hello') {
+    try {
+      if (panelBroadcastChannel) {
+        panelBroadcastChannel.postMessage({
+          type: 'init',
+          elements: JSON.parse(JSON.stringify(withTextSnapshot(specialElements))),
+          footerMissing: footerMissing
+        })
+      }
+    } catch (e) {
+      console.warn('[handlePanelMessage] hello response failed:', e)
+    }
+    return
+  }
 
   if (msg.type === 'apply') {
     const newElements = msg.elements
@@ -393,7 +453,7 @@ function handlePanelMessage(msg) {
           const el = specialElements.find(e => e.start === upd.oldStart)
           if (el) {
             el.start = upd.newStart
-            el.end = upd.newEnd
+            el.length = upd.newLength
           }
         }
       }
@@ -402,12 +462,12 @@ function handlePanelMessage(msg) {
         if (panelBroadcastChannel) {
           panelBroadcastChannel.postMessage({
             type: 'updateElements',
-            elements: JSON.parse(JSON.stringify(specialElements))
+            elements: JSON.parse(JSON.stringify(withTextSnapshot(specialElements)))
           })
         }
       } catch (e2) { }
       // 记录类型变更到记忆
-      recordTypeChanges(oldSnapshot, specialElements)
+      recordTypeChanges(oldSnapshot, specialElements, doc)
     } catch (e) {
       console.warn('[handlePanelMessage] apply failed:', e)
     }
@@ -454,26 +514,14 @@ function autoFormatDocument() {
         const el = specialElements.find(e => e.start === upd.oldStart)
         if (el) {
           el.start = upd.newStart
-          el.end = upd.newEnd
+          el.length = upd.newLength
         }
       }
     }
 
-    //无落款/发言人提示（每个文档仅一次）
-    const hasFooter = specialElements.some(el => el.type === 'sig' || el.type === 'date' || el.type === 'authorInfo' || el.type === 'authorInfo')
-    if (!hasFooter) {
-      try {
-        const docName = doc.FullName || doc.Name || ''
-        if (docName !== noFooterWarnedDocName) {
-          noFooterWarnedDocName = docName
-          noFooterWarned = false
-        }
-        if (!noFooterWarned) {
-          noFooterWarned = true
-          alert('未检测到落款或发言人，如需手动指定，可在排版微调面板中调整类型。')
-        }
-      } catch (e) { }
-    }
+    //落款/发言人缺失：传给面板显示提示条（不再用 alert 打断）
+    const hasFooter = specialElements.some(el => el.type === 'sig' || el.type === 'date' || el.type === 'authorInfo')
+    footerMissing = !hasFooter
 
     checkFontsOncePerSession()
     window.lastFormatTime = new Date().getTime()
@@ -509,17 +557,8 @@ function openFormatPanel(doc) {
       panelBroadcastChannel = null
     }
 
-    //通过 PluginStorage 传递初始数据给 TaskPane（面板 onMounted 读取）
-    try {
-      const storage = window.Application.PluginStorage
-      storage.setItem('__formatPanelData', JSON.stringify({
-        elements: JSON.parse(JSON.stringify(specialElements))
-      }))
-    } catch (e) {
-      console.warn('[openFormatPanel] PluginStorage write failed:', e)
-    }
-
-    //创建 BroadcastChannel 接收面板即时消息
+    //创建 BroadcastChannel：面板→主线程即时消息 + 主线程→面板初始数据即时推送
+    //不再使用 PluginStorage 传递初始数据（面板 onMounted 后主动发 hello，主线程收到即推送）
     try {
       panelBroadcastChannel = new BroadcastChannel('wps_format_panel')
       panelBroadcastChannel.onmessage = (event) => {
@@ -571,23 +610,67 @@ function openFormatPanel(doc) {
   }
 }
 
-//合并面板编辑结果到 specialElements
+//合并面板编辑结果到 specialElements，并执行面板编辑微调逻辑：
+//  对每个有 text 变化的元素，在 doc 里从 start 开始逐字比对，
+//  找出最长匹配前缀，更新该元素的 start+length 为匹配区间。
+//  未命中部分刷回正文字体大小（不改缩进）。
+//  body 类型元素从 specialElements 移除（回正文格式）。
 function mergePanelEdits(oldList, newList) {
   if (!Array.isArray(newList)) return oldList
+  const doc = window.Application.ActiveDocument
   const result = []
   for (const item of newList) {
+    if (item.type === 'body') continue  // 选"不是落款"，移出特殊元素
     const text = (item.text == null ? '' : String(item.text)).trim()
     if (!text) continue  //文本被清空则放弃该段
-    //保留 start/end 用于精准格式化
     const old = oldList.find(o => o.start === item.start)
+    const start = item.start ?? (old ? old.start : undefined)
+    let length = item.length ?? (old ? old.length : undefined)
+    // 面板编辑微调：逐字比对，更新 length 为最长匹配前缀
+    if (doc && typeof start === 'number' && typeof length === 'number' && text) {
+      const matchedLen = matchDocPrefix(doc, start, text)
+      if (matchedLen < length) {
+        // 未命中部分刷回正文字体大小（不改缩进）
+        try {
+          const rng = doc.Range(start + matchedLen, start + length)
+          rng.Font.Size = 16  // 三号正文
+          rng.Font.Name = '仿宋_GB2312'
+          rng.Font.NameAscii = 'Times New Roman'
+          rng.Font.NameOther = 'Times New Roman'
+          rng.Font.Bold = false
+        } catch (e) { }
+        length = matchedLen
+      }
+    }
     result.push({
       text: text,
-      start: item.start ?? (old ? old.start : undefined),
-      end: item.end ?? (old ? old.end : undefined),
+      start: start,
+      length: length,
       type: item.type
     })
   }
   return result
+}
+
+//面板编辑微调：从 doc 的 start 位置开始，逐字和 panelText 比对，
+//返回最长匹配前缀的字符数。字符不一致即中止。
+function matchDocPrefix(doc, start, panelText) {
+  try {
+    // 取 doc 中从 start 开始足够长的文本用于比对
+    const rng = doc.Range(start, start + panelText.length + 50)
+    const docText = rng.Text.replace(/[\r\n]+$/, '')
+    let matched = 0
+    for (let i = 0; i < panelText.length && i < docText.length; i++) {
+      if (panelText.charAt(i) === docText.charAt(i)) {
+        matched++
+      } else {
+        break  // 字符不一致，中止
+      }
+    }
+    return matched
+  } catch (e) {
+    return 0
+  }
 }
 
 //撤销排版

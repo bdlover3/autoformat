@@ -2,16 +2,22 @@
     <ribbon startFromScratch="false">
         <tabs>
             <tab id="wpsAddinTab" label="公文排版">
-				<group id="btnDemoGroup" label="公文排版工具">
+                <group id="grpAutoFormat" label="一键排版">
                     <button id="btnAutoFormat" label="一键排版" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnUndoFormat" label="一键恢复" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <button id="btnDetectSignature" label="记忆管理" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <button id="btnRemoveBlankLines" label="删除空行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                </group>
+                <group id="grpTune" label="格式微调">
                     <button id="btnSplitTitle" label="标题后换行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnRemoveBlankLines" label="删除空行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnDetectSignature" label="检测发言人" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                </group>
+                <group id="grpCommon" label="常用设置">
                     <button id="btnFormatSettings" label="调整固定格式" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                </group>
+                <group id="grpFunc" label="功能">
                     <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnAbout" label="关于" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-				</group>
+                </group>
             </tab>
         </tabs>
     </ribbon>

@@ -348,7 +348,7 @@ export function detectElements(doc, settings) {
 
   //--- 落款/日期：footer 反向扫描（一起处理，sig 从 date 向上收集） ---
   // 先处理，避免被前面规则误认
-  processFooter(baseTxt, used, result)
+  processFooter(baseTxt, used, result, lineCharCount)
 
   //--- 其余规则按优先级全文扫描 ---
   for (const rule of rules) {
@@ -479,71 +479,51 @@ function scanAllParagraphs(baseTxt) {
  *   - 落款：从日期（或最后一行）向上收集，不满行且非客套语则认成 sig
  *   - floor：落款收集下界（title 后或全文中点）
  */
-function processFooter(baseTxt, used, result) {
+function processFooter(baseTxt, used, result, lineCharCount) {
   const paras = scanAllParagraphs(baseTxt)
   if (paras.length === 0) return
 
-  // 落款区 = 倒数三行 或 倒数到第一个空行截止（空行不算落款）。
-  // 即使有多行标题也不会出现空行，所以空行是正文与落款的可靠边界。
-  // scanAllParagraphs 已跳过空段，需用 baseTxt 检测段间是否有空行（段间距 > 1 个 \r）。
-  const lastIdx = paras.length - 1
-  // 从末尾向上找落款区上界：最多倒数三行，遇到空行停止
-  let footerTopIdx = lastIdx  // 落款区最上面一行的 paras 索引
-  let linesFromBottom = 0
-  for (let i = lastIdx; i >= 0; i--) {
-    if (linesFromBottom >= 3) break  // 最多倒数三行
-    if (i < lastIdx) {
-      // 检查 paras[i] 和 paras[i+1] 之间是否有真正的空段（多于一个 \r）。
-      // 不能用段间距判断：落款行用全角空格做缩进，trim 后段间距 > 1 但不是空行。
-      // 正确做法：数 baseTxt 中 curEnd 到 nextStart 之间有几个 \r，≥2 才是空行。
-      const curEnd = paras[i].start + paras[i].length
-      const nextStart = paras[i + 1].start
-      let crCount = 0
-      for (let k = curEnd; k < nextStart; k++) {
-        if (baseTxt.charAt(k) === '\r') crCount++
-      }
-      console.log('[detect] footer: paras[', i, ']=', JSON.stringify(paras[i].text), '中间\\r数=', crCount)
-      if (crCount >= 2) {
-        // 中间有真正的空段，落款区到此为止（paras[i] 不算落款）
-        console.log('[detect] footer: 遇空行停止，footerTopIdx=', i + 1)
-        footerTopIdx = i + 1
-        break
-      }
-    }
-    footerTopIdx = i
-    linesFromBottom++
-  }
-  console.log('[detect] footer区: [', footerTopIdx, ',', lastIdx, '] 共', lastIdx - footerTopIdx + 1, '行')
-  for (let k = footerTopIdx; k <= lastIdx; k++) {
-    console.log('[detect]   paras[', k, ']=', JSON.stringify(paras[k].text))
-  }
+  // 落款识别规则：
+  //   1. 必须有日期（datePattern 匹配），无日期则不认落款区
+  //   2. 落款每行必须不满行（宽度 < 行宽 75%），满行是正文不是落款
+  //   3. 落款最多 2 行（日期上方），超过 2 行则不是落款
+  //   4. 不强行找落款：没有日期就不认
 
-  // 落款区段索引范围 [footerTopIdx, lastIdx]
-  // 日期：在落款区里找 datePattern 匹配（通常最后一行）
+  // 从文末倒数 3 行内找日期
+  const lastIdx = paras.length - 1
+  const lookBack = Math.min(3, paras.length)
   let dateParaIdx = -1
-  for (let i = lastIdx; i >= footerTopIdx; i--) {
+  for (let i = lastIdx; i >= lastIdx - lookBack + 1; i--) {
+    if (i < 0) continue
     if (used.contains(paras[i].start, paras[i].start + paras[i].length)) continue
     if (datePattern.test(paras[i].text)) {
       dateParaIdx = i
       break
     }
   }
-  console.log('[detect] footer dateParaIdx=', dateParaIdx)
 
-  if (dateParaIdx >= 0) {
-    const p = paras[dateParaIdx]
-    result.push({ start: p.start, length: p.length, type: 'date' })
-    used.add(p.start, p.start + p.length)
-  }
+  // 无日期 → 不认落款区
+  if (dateParaIdx < 0) return
 
-  // 落款：落款区里非日期的段都认成 sig（不再用"不满行/客套语中断"，因为落款区已限定）
-  for (let i = footerTopIdx; i <= lastIdx; i++) {
-    if (i === dateParaIdx) continue  // 日期段已认领
-    const p = paras[i]
-    if (used.contains(p.start, p.start + p.length)) continue
-    console.log('[detect] footer 认领 sig:', JSON.stringify(p.text))
+  // 认领日期
+  const dp = paras[dateParaIdx]
+  result.push({ start: dp.start, length: dp.length, type: 'date' })
+  used.add(dp.start, dp.start + dp.length)
+
+  // 落款：从日期向上收集，最多 2 行，每行必须不满行
+  let collected = 0
+  let cur = dateParaIdx - 1
+  while (cur >= 0 && collected < 2) {
+    const p = paras[cur]
+    if (used.contains(p.start, p.start + p.length)) { cur--; continue }
+    // 满行 → 正文，不是落款
+    if (measureWidth(p.text) >= lineCharCount * 0.75) break
+    // 客套语中断
+    if (isClosingFormula(p.text)) break
     result.push({ start: p.start, length: p.length, type: 'sig' })
     used.add(p.start, p.start + p.length)
+    collected++
+    cur--
   }
 }
 

@@ -7,7 +7,7 @@ import { applyBodyFormat, applySpecialFormat, boldEnumerations, boldTitleWithTai
 import { clearAllFormatting, setupPage } from './js/page.js'
 import { removeBlankLines, splitTitleParagraph, removeTitleEndSymbols } from './js/docops.js'
 import { loadTypeMemory, recordTypeChanges, deleteTypeMemory } from './js/typememory.js'
-import { loadSignatures } from './js/signature.js'
+import { loadSignatures, addSignature } from './js/signature.js'
 import { VERSION } from './js/version.js'
 
 //默认格式设置
@@ -768,6 +768,9 @@ function autoFormatDocument() {
       footerMissing = !hasFooter && !getSettings().disableFooterWarning
     } catch (e) { footerMissing = !hasFooter }
 
+    //落款永久记忆：排版后自动将落款文本存入落款库
+    autoRememberSignatures(doc, specialElements)
+
     //字体缺失检测：填 panelMissingFonts 推送给面板显示提示条（用户可在面板点"不再提示"永久关闭）
     try {
       const settings = getSettings()
@@ -789,6 +792,51 @@ function autoFormatDocument() {
 
   //打开微调面板
   openFormatPanel(doc)
+}
+
+//落款永久记忆：排版后自动将落款文本存入落款库
+//将连续的 sig/authorInfo/date 元素合并为一个落款文本，去重后存入
+function autoRememberSignatures(doc, elements) {
+  if (!doc || !Array.isArray(elements)) return
+  const footerTypes = new Set(['sig', 'authorInfo', 'date'])
+  const footerEls = elements.filter(el => footerTypes.has(el.type))
+  if (footerEls.length === 0) return
+
+  //按 start 排序，合并连续落款元素为一个落款文本
+  footerEls.sort((a, b) => a.start - b.start)
+  const groups = []
+  let curGroup = [footerEls[0]]
+  for (let i = 1; i < footerEls.length; i++) {
+    const prev = curGroup[curGroup.length - 1]
+    const cur = footerEls[i]
+    //连续 = 前一个 end 等于当前 start（或差1，容许段落标记）
+    if (cur.start - (prev.start + prev.length) <= 1) {
+      curGroup.push(cur)
+    } else {
+      groups.push(curGroup)
+      curGroup = [cur]
+    }
+  }
+  groups.push(curGroup)
+
+  //每组拼接文本，去重后存入落款库
+  const existing = loadSignatures()
+  const existingTexts = new Set(existing.map(s => s.text))
+  for (const group of groups) {
+    let text = ''
+    for (const el of group) {
+      try {
+        const elText = doc.Range(el.start, el.start + el.length).Text
+        //去掉段尾 \r，换成换行
+        text += elText.replace(/\r/g, '\n')
+      } catch (e) { }
+    }
+    text = text.trim()
+    if (text && !existingTexts.has(text)) {
+      addSignature(text)
+      existingTexts.add(text)
+    }
+  }
 }
 
 function openFormatPanel(doc) {
@@ -1024,14 +1072,10 @@ const PROJECT_URL = 'https://gitee.com/rainsoft0456/wpsautoformat'
 
 async function checkForUpdates() {
   try {
-    const response = await fetch(VERSION_URL)
-    if (!response.ok) {
-      throw new Error('网络请求失败')
-    }
-    const latestVersion = await response.text()
+    const latestVersion = await httpGet(VERSION_URL, 8000)
     const cleanVersion = latestVersion.trim()
 
-    if (cleanVersion !== VERSION) {
+    if (isNewerVersion(cleanVersion, VERSION)) {
       const result = window.confirm(`检测到新版本：${cleanVersion}\n当前版本：${VERSION}\n\n是否前往下载更新？`)
       if (result) {
         window.Application.Hyperlink(PROJECT_URL)
@@ -1042,6 +1086,42 @@ async function checkForUpdates() {
   } catch (error) {
     alert('检查更新失败：' + error.message)
   }
+}
+
+// XMLHttpRequest 兼容 WPS 内嵌浏览器（fetch 可能不可用）
+function httpGet(url, timeout) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('GET', url, true)
+    xhr.timeout = timeout || 8000
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.responseText)
+      } else {
+        reject(new Error('网络请求失败 (HTTP ' + xhr.status + ')'))
+      }
+    }
+    xhr.ontimeout = function () {
+      reject(new Error('请求超时'))
+    }
+    xhr.onerror = function () {
+      reject(new Error('网络请求失败'))
+    }
+    xhr.send()
+  })
+}
+
+// 语义化版本比较：remote > local 返回 true
+function isNewerVersion(remote, local) {
+  const r = remote.split('.').map(Number)
+  const l = local.split('.').map(Number)
+  for (let i = 0; i < 3; i++) {
+    const rv = r[i] || 0
+    const lv = l[i] || 0
+    if (rv > lv) return true
+    if (rv < lv) return false
+  }
+  return false
 }
 
 //这些函数是给wps客户端调用的

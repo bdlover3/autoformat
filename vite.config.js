@@ -20,6 +20,13 @@ export default defineConfig({
     }
   },
   server: {
-    host: '0.0.0.0'
+    host: '0.0.0.0',
+    proxy: {
+      '/remote/version.txt': {
+        target: 'https://wpsautoformat.netlify.app',
+        changeOrigin: true,
+        rewrite: (path) => '/version.txt'
+      }
+    }
   }
 })

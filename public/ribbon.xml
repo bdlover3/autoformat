@@ -26,7 +26,7 @@
                     <button id="btnFormatSettings" label="固定格式设置" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <separator id="sep3"/>
                     <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
-                    <button id="btnAbout" label="关于" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                    <button id="btnAbout" label="关于插件" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                 </group>
             </tab>
         </tabs>

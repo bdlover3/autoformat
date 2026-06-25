@@ -5,18 +5,28 @@
                 <group id="grpAutoFormat" label="一键排版">
                     <button id="btnAutoFormat" label="一键排版" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnUndoFormat" label="一键恢复" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <separator id="sepGrp1"/>
+                    <button id="btnMarkElement" label="标记元素" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnInsertSignature" label="插入落款" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <separator id="sep1"/>
+                    <box id="boxSplitRemove" boxStyle="vertical" visible="true">
+                        <button id="btnSplitTitle" label="标题后换行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                        <button id="btnRemoveBlankLines" label="删除全部空行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                    </box>
+                    <separator id="sepBox"/>
+                    <box id="boxTitleEnd" boxStyle="vertical" visible="true">
+                        <button id="btnRemoveTitleEndSymbol" label="删除标题末符号" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                        <button id="btnBoldTitleWithTail" label="&quot;一是&quot;整句加粗" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                    </box>
+                    <separator id="sep2"/>
+                    <button id="btnDetectSignature" label="记忆格式管理" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                 </group>
-                <group id="grpTune" label="格式微调">
-                    <button id="btnSplitTitle" label="标题后换行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <button id="btnRemoveBlankLines" label="删除空行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <button id="btnDetectSignature" label="检测发言人" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                </group>
-                <group id="grpCommon" label="常用设置">
-                    <button id="btnFormatSettings" label="调整固定格式" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                </group>
+                <separator id="sepGrp2"/>
                 <group id="grpFunc" label="功能">
-                    <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <button id="btnAbout" label="关于" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnFormatSettings" label="固定格式设置" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <separator id="sep3"/>
+                    <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                    <button id="btnAbout" label="关于" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                 </group>
             </tab>
         </tabs>

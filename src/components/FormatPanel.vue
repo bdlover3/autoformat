@@ -2,110 +2,63 @@
   <div class="panel" @click="onPanelClick">
 
     <div class="panel-body">
-
-      <!-- ═══ 一键排版区 ═══ -->
-      <div class="panel-section section-format">
-        <div class="section-header" @click="toggleSection('format')">
-          <span class="section-arrow" :class="{ collapsed: sections.format }">&#9654;</span>
-          <span class="section-title">一键排版</span>
-        </div>
-        <div class="section-body" v-show="!sections.format">
-          <button class="mini-btn" @click="runAutoFormat">一键排版</button>
-          <button class="mini-btn" @click="runUndoFormat">撤销排版</button>
-          <button class="mini-btn" @click="runSplitTitle">标题后换行</button>
-          <button class="mini-btn" @click="runRemoveBlank">删除空行</button>
-        </div>
+      <div v-if="footerMissing && !footerWarnDismissed" class="footer-warn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="warn-text">未检测到落款或发言人，可在下方手动调整类型</span>
+        <button class="warn-btn" title="不再提示本次排版" @click.stop="dismissFooterWarn">不再提示</button>
+        <button class="warn-close" title="关闭" @click.stop="footerWarnDismissed = true">✕</button>
       </div>
-
-      <!-- ═══ 格式微调区 ═══ -->
-      <div class="panel-section section-tune">
-        <div class="section-header" @click="toggleSection('tune')">
-          <span class="section-arrow" :class="{ collapsed: sections.tune }">&#9654;</span>
-          <span class="section-title">格式微调</span>
-          <span class="section-count" v-if="sortedElements.length">{{ sortedElements.length }}</span>
-        </div>
-        <div class="section-body" v-show="!sections.tune">
-          <div v-if="footerMissing" class="footer-warn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span>未检测到落款或发言人，可在下方手动调整类型</span>
+      <div v-if="missingFonts.length > 0 && !fontWarnDismissed" class="font-warn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7V4h16v3M9 20h6M12 4v16" stroke="#c80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="warn-text">缺失字体：{{ missingFonts.map(f => f.name).join('、') }}，已自动替换</span>
+        <button class="warn-btn" title="以后不再提示字体缺失" @click.stop="disableFontWarning">不再提示</button>
+        <button class="warn-close" title="关闭" @click.stop="fontWarnDismissed = true">✕</button>
+      </div>
+      <template v-if="sortedElements.length > 0">
+        <div
+          v-for="(group, gIdx) in groupedElements"
+          :key="gIdx"
+          class="element-group"
+        >
+          <div class="group-header" @click="toggleGroup(group.key)">
+            <span class="group-arrow" :class="{ collapsed: collapsedGroups[group.key] }">&#9654;</span>
+            <span class="group-label">{{ group.label }}</span>
+            <span class="group-count">{{ group.items.length }}</span>
           </div>
-          <template v-if="sortedElements.length > 0">
+          <div class="group-items" v-show="!collapsedGroups[group.key]">
             <div
-              v-for="(group, gIdx) in groupedElements"
-              :key="gIdx"
-              class="element-group"
+              v-for="item in group.items"
+              :key="item.start"
+              class="element-item"
+              :class="'item-' + item.type"
+              @click="navigateToItem(item)"
             >
-              <div class="group-header" @click="toggleGroup(group.key)">
-                <span class="group-arrow" :class="{ collapsed: collapsedGroups[group.key] }">&#9654;</span>
-                <span class="group-label">{{ group.label }}</span>
-                <span class="group-count">{{ group.items.length }}</span>
-              </div>
-              <div class="group-items" v-show="!collapsedGroups[group.key]">
+              <div class="element-row">
                 <div
-                  v-for="item in group.items"
-                  :key="item.start"
-                  class="element-item"
-                  :class="'item-' + item.type"
-                  @click="navigateToItem(item)"
-                >
-                  <div class="element-row">
-                    <div
-                      class="element-text"
-                      :class="{ 'text-muted': item.matched === false }"
-                      contenteditable="true"
-                      spellcheck="false"
-                      :data-idx="item.start"
-                      @input="onTextChanged($event, item)"
-                      @blur="onBlur"
-                    >{{ item.text }}</div>
-                    <div
-                      v-if="getInvalidTail(item)"
-                      class="invalid-tail"
-                      :title="'文档中不匹配，将变回正文格式'"
-                    >{{ getInvalidTail(item) }}</div>
-                    <span
-                      class="type-badge"
-                      :class="'badge-' + item.type"
-                      @click.stop="onBadgeClick($event, item)"
-                    >{{ typeLabel(item.type) }}</span>
-                  </div>
-                </div>
+                  class="element-text"
+                  :class="{ 'text-muted-all': item.matched === false && (item.matchedLen || 0) === 0 }"
+                  contenteditable="true"
+                  spellcheck="false"
+                  :data-idx="item.start"
+                  :ref="el => setTextRef(item.start, el)"
+                  @input="onTextChanged($event, item)"
+                  @keydown.enter.exact.prevent="onEnterSubmit($event)"
+                  @blur="onBlur(item)"
+                ></div>
+                <span
+                  class="type-badge"
+                  :class="'badge-' + item.type"
+                  @click.stop="onBadgeClick($event, item)"
+                >{{ typeLabel(item.type) }}</span>
               </div>
             </div>
-          </template>
-          <div v-else class="empty-hint">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="#bbb" stroke-width="1.5"/><path d="M9 14l2 2 4-4" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span>未检测到特殊元素</span>
           </div>
         </div>
+      </template>
+      <div v-else class="empty-hint">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="#bbb" stroke-width="1.5"/><path d="M9 14l2 2 4-4" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>未检测到特殊元素</span>
       </div>
-
-      <!-- ═══ 常用设置区 ═══ -->
-      <div class="panel-section section-common">
-        <div class="section-header" @click="toggleSection('common')">
-          <span class="section-arrow" :class="{ collapsed: sections.common }">&#9654;</span>
-          <span class="section-title">常用设置</span>
-        </div>
-        <div class="section-body" v-show="!sections.common">
-          <label class="setting-row"><input type="checkbox" v-model="commonSettings.enablePageNumber" @change="saveCommonSettings">启用页码</label>
-          <label class="setting-row"><input type="checkbox" v-model="commonSettings.clearFormatting" @change="saveCommonSettings">先清除格式</label>
-          <label class="setting-row"><input type="checkbox" v-model="commonSettings.autoSplitSubtitle" @change="saveCommonSettings">标题后自动换行</label>
-        </div>
-      </div>
-
-      <!-- ═══ 功能设置区 ═══ -->
-      <div class="panel-section section-func">
-        <div class="section-header" @click="toggleSection('func')">
-          <span class="section-arrow" :class="{ collapsed: sections.func }">&#9654;</span>
-          <span class="section-title">功能设置</span>
-        </div>
-        <div class="section-body" v-show="!sections.func">
-          <button class="mini-btn" @click="runDetectSignature">检测发言人</button>
-          <button class="mini-btn" @click="openFullSettings">完整设置</button>
-          <button class="mini-btn" @click="clearTypeMemory">清空记忆</button>
-        </div>
-      </div>
-
     </div>
 
     <!-- 修改类型的右键/选中菜单 -->
@@ -135,7 +88,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, nextTick } from 'vue'
 
 const TYPE_LABELS = {
   docNumber: '文号',
@@ -175,7 +128,8 @@ function getAvailableTypes(currentType) {
     // 落款区：互转 + "不是落款"（body）
     return [{ key: 'sig', label: '落款' }, { key: 'date', label: '日期' }, { key: 'body', label: '不是落款' }]
   }
-  return ALL_TYPES.filter(t => NON_FOOTER_TYPES.includes(t.key))
+  // 非落款区：全部特殊类型 + "正文"（body，转回正文格式，移出特殊元素）
+  return ALL_TYPES.filter(t => NON_FOOTER_TYPES.includes(t.key)).concat([{ key: 'body', label: '正文' }])
 }
 
 const GROUP_ORDER = [
@@ -189,44 +143,14 @@ export default {
   setup() {
     const elements = ref([])
     const footerMissing = ref(false)
+    const footerWarnDismissed = ref(false)  // 用户点 ✕ 关闭落款提示
+    const missingFonts = ref([])
+    const fontWarnDismissed = ref(false)    // 用户点 ✕ 关闭字体提示
     const collapsedGroups = reactive({})
-    // 四区分组折叠状态（默认展开）
-    const sections = reactive({ format: false, tune: false, common: false, func: false })
-    function toggleSection(key) { sections[key] = !sections[key] }
-    // 常用设置（从主线程读/写）
-    const commonSettings = reactive({
-      enablePageNumber: true,
-      clearFormatting: true,
-      autoSplitSubtitle: false
-    })
-    // 一键排版区按钮：通过 BroadcastChannel 通知主线程执行
-    function runAutoFormat() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'autoFormat' }) } catch (e) { }
-    }
-    function runUndoFormat() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'undoFormat' }) } catch (e) { }
-    }
-    function runSplitTitle() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'splitTitle' }) } catch (e) { }
-    }
-    function runRemoveBlank() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'removeBlank' }) } catch (e) { }
-    }
-    function runDetectSignature() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'detectSignature' }) } catch (e) { }
-    }
-    function openFullSettings() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'openSettings' }) } catch (e) { }
-    }
-    function clearTypeMemory() {
-      try { if (bc) bc.postMessage({ type: 'runAction', action: 'clearMemory' }) } catch (e) { }
-    }
-    // 常用设置读写：通过 BroadcastChannel 和主线程同步
-    function saveCommonSettings() {
-      try { if (bc) bc.postMessage({ type: 'saveSettings', settings: { ...commonSettings } }) } catch (e) { }
-    }
-    // 收到主线程推送的设置时填充
-    // 在 bc.onmessage 里加 loadSettings 分支
+    let editingStart = null  // 当前正在编辑的元素 start（input 时记录，blur 时清除，updateElements 回显时跳过此元素避免破坏光标）
+    // 非响应式存储：DOM 引用 + 用户编辑中的文本（不进 Vue 响应式，避免 @input 触发重渲染导致光标乱跳）
+    const textRefs = {}      // start → contenteditable DOM
+    const pendingText = {}   // start → 用户编辑中的文本（未提交）
     const contextMenu = reactive({
       visible: false,
       x: 0,
@@ -235,7 +159,6 @@ export default {
       currentType: '',
       availableTypes: []
     })
-    let debounceTimer = null
     let dirty = false
 
     //BroadcastChannel 用于面板→主窗口即时通讯（替代 PluginStorage 轮询）
@@ -255,11 +178,16 @@ export default {
             //主线程响应 hello 推送的初始数据（含 footerMissing 标志）
             elements.value = JSON.parse(JSON.stringify(msg.elements))
             footerMissing.value = !!msg.footerMissing
-          } else if (msg && msg.type === 'loadSettings' && msg.settings) {
-            Object.assign(commonSettings, msg.settings)
+            footerWarnDismissed.value = false  // 新一次排版，重置关闭状态
+            missingFonts.value = Array.isArray(msg.missingFonts) ? msg.missingFonts : []
+            fontWarnDismissed.value = false
+            //初始化所有 DOM innerHTML（renderText 拆黑/灰双色）
+            nextTickAllInnerHTML()
           } else if (msg && msg.type === 'updateElements' && Array.isArray(msg.elements)) {
-            //apply 后主线程推回的最新位置/类型
+            //apply 后主线程推回的最新位置/类型/matched/matchedLen
             elements.value = JSON.parse(JSON.stringify(msg.elements))
+            //对所有非聚焦元素手动重设 innerHTML 显示双色；聚焦元素不动（避免打断编辑）
+            nextTickAllInnerHTML()
           }
         } catch (e) { }
       }
@@ -270,7 +198,6 @@ export default {
       try {
         if (bc) {
           bc.postMessage({ type: 'hello' })
-          bc.postMessage({ type: 'loadSettings' })
         }
       } catch (e) {
         console.warn('[FormatPanel] hello send failed:', e)
@@ -375,13 +302,17 @@ export default {
     }
 
     function flushDebounce() {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer)
-        debounceTimer = null
+      //失焦/回车已即时提交，这里仅保留兜底：若有未提交的 pendingText，写回并 apply
+      let hasPending = false
+      for (const k in pendingText) {
+        const idx = elements.value.findIndex(e => e.start === Number(k))
+        if (idx >= 0) {
+          elements.value[idx].text = pendingText[k]
+          delete pendingText[k]
+          hasPending = true
+        }
       }
-      if (dirty) {
-        applyNow()
-      }
+      if (hasPending) applyNow()
     }
 
     function applyNow() {
@@ -395,23 +326,82 @@ export default {
       }
     }
 
-    // 未命中尾部：text 中超出 length 的部分（面板编辑后逐字比对，不匹配的变灰提示）
-    function getInvalidTail(item) {
-      if (!item || !item.text || typeof item.length !== 'number') return ''
-      if (item.length >= item.text.length) return ''
-      return item.text.substring(item.length)
+    //收集 contenteditable DOM 引用，首次挂载时设初始 innerHTML（renderText 拆黑/灰双色）
+    //Vue 3 函数式 ref：挂载时传 DOM，卸载时传 null（必须处理 null 否则 textRefs 存旧 DOM）
+    function setTextRef(start, el) {
+      if (el) {
+        textRefs[start] = el
+        //首次挂载：设初始 innerHTML
+        const item = elements.value.find(e => e.start === start)
+        if (item) el.innerHTML = renderText(item)
+      } else {
+        //卸载：清引用，避免 nextTickAllInnerHTML 拿到已脱离文档的旧 DOM
+        delete textRefs[start]
+      }
     }
 
+    //渲染元素文字：matched=false 时按 matchedLen 拆成两段，
+    //匹配部分黑色，超出部分灰色（提示用户超出原文长度部分未生效）
+    //转义 HTML 特殊字符，避免 XSS / contenteditable 解析异常
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    }
+    function renderText(item) {
+      const text = item.text || ''
+      if (item.matched === false && typeof item.matchedLen === 'number' && item.matchedLen < text.length) {
+        const matchedPart = text.slice(0, item.matchedLen)
+        const extraPart = text.slice(item.matchedLen)
+        return escapeHtml(matchedPart) + '<span class="text-muted">' + escapeHtml(extraPart) + '</span>'
+      }
+      return escapeHtml(text)
+    }
+
+    //对所有非聚焦元素 DOM 重设 innerHTML 显示双色；聚焦元素不动（避免打断编辑）
+    //用 Vue nextTick 等 v-for DOM 更新完成；textRefs 可能存旧 DOM，用 data-idx 反查兜底
+    function nextTickAllInnerHTML() {
+      nextTick(() => {
+        for (const item of elements.value) {
+          if (item.start === editingStart) continue  //正在编辑的元素不动
+          //优先用 textRefs，失效时用 data-idx 属性反查最新 DOM
+          let el = textRefs[item.start]
+          if (!el || !el.isConnected) {
+            el = document.querySelector('.element-text[data-idx="' + item.start + '"]')
+            if (el) textRefs[item.start] = el
+          }
+          if (el) el.innerHTML = renderText(item)
+        }
+      })
+    }
+
+    //编辑中：只存到非响应式 pendingText，不写 item.text，不触发 Vue 重渲染，光标稳定
     function onTextChanged(event, item) {
       const el = event.target
-      item.text = el.innerText || el.textContent || ''
+      pendingText[item.start] = el.innerText || el.textContent || ''
+      editingStart = item.start
       dirty = true
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(applyNow, 3000)
     }
 
-    function onBlur() {
+    //回车仅触发提交（不换行，prevent 已在模板处理）
+    function onEnterSubmit(event) {
+      event.target.blur()  //走 onBlur 提交逻辑
+    }
+
+    //失焦提交：把 pendingText 写回 item.text，发主线程格式刷
+    function onBlur(item) {
+      if (pendingText[item.start] != null) {
+        item.text = pendingText[item.start]
+        delete pendingText[item.start]
+        dirty = true
+      }
       if (dirty) applyNow()
+      editingStart = null
+      //失焦后立即重设当前 DOM innerHTML 显示双色（apply 回推也会设，但失焦当下先设避免闪灰）
+      const el = textRefs[item.start]
+      if (el) el.innerHTML = renderText(item)
     }
 
     function closePanel() {
@@ -424,8 +414,9 @@ export default {
     }
 
     function cancel() {
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = null
+      //放弃当前未提交编辑
+      for (const k in pendingText) delete pendingText[k]
+      dirty = false
       try {
         if (bc) {
           bc.postMessage({ type: 'cancel' })
@@ -433,35 +424,50 @@ export default {
       } catch (e) { }
     }
 
+    //永久关闭落款缺失提示：通知主线程写入 settings.disableFooterWarning，并即时隐藏
+    function dismissFooterWarn() {
+      footerWarnDismissed.value = true
+      try {
+        if (bc) {
+          bc.postMessage({ type: 'disableFooterWarning' })
+        }
+      } catch (e) { }
+    }
+
+    //永久关闭字体缺失提示：通知主线程写入 settings.disableFontWarning，并即时隐藏
+    function disableFontWarning() {
+      fontWarnDismissed.value = true
+      try {
+        if (bc) {
+          bc.postMessage({ type: 'disableFontWarning' })
+        }
+      } catch (e) { }
+    }
+
     return {
       elements,
       footerMissing,
+      footerWarnDismissed,
+      missingFonts,
+      fontWarnDismissed,
       sortedElements,
       groupedElements,
       collapsedGroups,
       contextMenu,
       typeLabel,
       toggleGroup,
+      setTextRef,
       onTextChanged,
+      onEnterSubmit,
       onBlur,
       onBadgeClick,
       onPanelClick,
       changeType,
-      getInvalidTail,
       navigateToItem,
-      sections,
-      toggleSection,
-      commonSettings,
-      saveCommonSettings,
-      runAutoFormat,
-      runUndoFormat,
-      runSplitTitle,
-      runRemoveBlank,
-      runDetectSignature,
-      openFullSettings,
-      clearTypeMemory,
       closePanel,
-      cancel
+      cancel,
+      dismissFooterWarn,
+      disableFontWarning
     }
   }
 }
@@ -614,6 +620,10 @@ export default {
 .text-muted {
   color: #bbb;
 }
+/* 整段不匹配（matchedLen=0）时整行变灰 */
+.text-muted-all {
+  color: #bbb;
+}
 
 /* === 类型标签 === */
 .type-badge {
@@ -714,81 +724,58 @@ export default {
 .footer-warn svg {
   flex-shrink: 0;
 }
-
-/* === 未命中尾部灰显 === */
-.invalid-tail {
-  color: #bbb;
-  font-size: 11px;
-  padding: 2px 4px;
-  line-height: 1.4;
-  word-break: break-all;
-  font-style: italic;
-}
-
-/* === 分区 === */
-.panel-section {
-  border-bottom: 1px solid #f0f0f0;
-}
-.panel-section:last-child { border-bottom: none; }
-.section-header {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  background: #fafafa;
-}
-.section-header:hover { background: #f0f0f0; }
-.section-arrow {
-  font-size: 8px;
-  color: #999;
-  margin-right: 6px;
-  transition: transform 0.15s;
-  display: inline-block;
-}
-.section-arrow.collapsed { transform: rotate(0deg); }
-.section-arrow:not(.collapsed) { transform: rotate(90deg); }
-.section-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #444;
+.footer-warn .warn-text {
   flex: 1;
 }
-.section-body {
-  padding: 6px 12px;
-}
-/* 小按钮 */
-.mini-btn {
-  display: inline-block;
-  padding: 4px 10px;
-  margin: 2px 4px 2px 0;
-  border: 1px solid #d9d9d9;
-  border-radius: 3px;
-  font-size: 12px;
-  cursor: pointer;
-  background: #fff;
-  color: #333;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.mini-btn:hover {
-  border-color: #4096ff;
-  color: #4096ff;
-}
-/* 设置行 */
-.setting-row {
+
+/* === 字体缺失提示条 === */
+.font-warn {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0;
-  font-size: 12px;
-  color: #333;
-  cursor: pointer;
+  padding: 8px 12px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffd591;
+  color: #ad6800;
+  font-size: 11px;
+  line-height: 1.5;
 }
-.setting-row input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
+.font-warn svg {
+  flex-shrink: 0;
+}
+.font-warn .warn-text {
+  flex: 1;
+}
+
+/* 提示条按钮：不再提示 / ✕ 关闭 */
+.warn-btn {
+  flex-shrink: 0;
+  border: 1px solid #ffd591;
+  background: transparent;
+  color: #ad6800;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
   cursor: pointer;
+  font-family: inherit;
+  line-height: 1.4;
+}
+.warn-btn:hover {
+  background: #ffe7ba;
+  border-color: #ffc53d;
+}
+.warn-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #ad6800;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.warn-close:hover {
+  color: #d4380d;
 }
 
 /* === 空状态 === */

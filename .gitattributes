@@ -1,0 +1,23 @@
+# 统一行尾为 LF，消除 Windows 上 core.autocrlf=true 导致的 CRLF/LF 反复转换。
+# 加此文件后，新提交的文件在仓库和工作区都用 LF，编辑工具不再因行尾不匹配而失败。
+# 已存在的 CRLF 文件需执行一次规范化：git add --renormalize . && git commit
+
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.7z binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.exe binary
+*.dll binary
+*.bin binary

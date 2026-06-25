@@ -39,11 +39,15 @@ export default {
   setup() {
     const items = ref([])
 
-    // 从记忆文件直接读取
+    // 从记忆文件直接读取（兼容新旧格式）
     try {
       const memory = loadTypeMemory()
-      for (const [text, type] of Object.entries(memory)) {
-        items.value.push({ text, type })
+      for (const [text, entry] of Object.entries(memory)) {
+        if (!text || text[0] === '_') continue  // 跳过内部索引键
+        // 新格式：{ type, length }；旧格式：纯字符串 "type"
+        const type = typeof entry === 'string' ? entry : (entry && entry.type)
+        const len = typeof entry === 'string' ? text.length : (entry && typeof entry.length === 'number' ? entry.length : text.length)
+        if (type) items.value.push({ text, type, length: len })
       }
     } catch (e) { }
 

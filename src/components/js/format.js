@@ -14,7 +14,7 @@
 //==============================================================
 
 import { RULES } from './rules.js'
-import { measureWidth } from './patterns.js'
+import { measureWidth, h1Pattern, h2Pattern, h3Pattern } from './patterns.js'
 import { matchDetect } from './detect.js'
 
 //--- 对齐方式常量 ---
@@ -178,10 +178,11 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
     }
 
     // 核对当前文本是否仍匹配该类型规则
+    // manual=true 表示用户手动标记，跳过正则核对，直接刷格式（尊重用户意图）
     const rule = RULES.find(r => r.type === el.type)
     if (rule && rule.formatSpec) {
       const detectSpec = rule.detect
-      const matched = detectSpec ? matchDetect(elText, detectSpec) : true
+      const matched = el.manual ? true : (detectSpec ? matchDetect(elText, detectSpec) : true)
       if (matched) {
         // 段落格式属性（Alignment / Indent）作用于所有相关段（跨段指针时含续行段）
         for (const pr of paraRanges) {
@@ -199,7 +200,11 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
         try {
           const fontName = fonts[rule.formatSpec.fontKey] || fonts.bodyFontName
           segRange.Font.Name = fontName
-          segRange.Font.Bold = !!rule.formatSpec.bold
+          // 加粗：优先读 settings[boldKey]（h1/h2/h3 可配置），回退到 formatSpec.bold
+          const boldVal = rule.formatSpec.boldKey && settings[rule.formatSpec.boldKey] != null
+            ? !!settings[rule.formatSpec.boldKey]
+            : !!rule.formatSpec.bold
+          segRange.Font.Bold = boldVal
           segRange.Font.NameAscii = 'Times New Roman'
           segRange.Font.NameOther = 'Times New Roman'
           if (rule.formatSpec.fontSizeKey && settings[rule.formatSpec.fontSizeKey] != null) {
@@ -238,6 +243,7 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
   const lineCharCount = calcLineCharCount(doc, settings)
   const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
 
+  // 收集 sig（发文机关署名）与 date（成文日期），按文档位置排序
   const lines = []
   for (const el of sigGroup) {
     if (typeof el.start !== 'number' || typeof el.length !== 'number') continue
@@ -259,7 +265,7 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
 
     //优先使用面板编辑后的 text
     const editedText = (el.text == null) ? raw : String(el.text).replace(/[\r\n]+$/, '').replace(/\s+$/, '')
-    lines.push({ start: el.start, length: el.length, paraStart, paraEnd, text: editedText })
+    lines.push({ type: el.type, start: el.start, length: el.length, paraStart, paraEnd, text: editedText })
   }
   lines.sort((a, b) => a.start - b.start)
 
@@ -272,15 +278,54 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
     } catch (e) { }
   }
 
-  //测量宽度
-  let maxW = 0
+  //测量每行宽度（半字符单位，中文字=1，半角字符=0.5）
   for (const line of lines) {
     line.width = measureWidth(line.text)
-    if (line.width > maxW) maxW = line.width
   }
-  //整体右对齐：最长行的右边界贴行尾，baseLeft = 行宽 - 最长行宽度
-  //所有行用同样的前导空格数，彼此左对齐（公文落款标准：行首对齐，整体靠右）
-  const baseLeft = Math.max(0, lineCharCount - maxW)
+
+  // GB/T 9704-2012 不加盖印章公文排版规则：
+  //   默认：发文机关署名右空二字；成文日期在署名下一行，首字比署名首字右移二字。
+  //   日期长于署名时：成文日期右空二字编排，并相应增加发文机关署名右空字数
+  //   （署名首字追齐日期首字，使日期右空二字固定）。
+  //
+  // 署名允许 1 行或 2 行（detect.js processFooter 最多收集 2 行 sig）：
+  //   多行署名视为一个整体，所有 sig 行共用同一 rightBlank，各行右端对齐，
+  //   署名整体右端距行尾 rightBlank 字。署名宽度 sigW 取各行宽度的最大值
+  //   （最宽行决定署名整体的右端，也是日期首字右移2字的参照）。
+  //
+  // 设 sigW=署名整体宽（各行最宽），dateW=日期宽，s=署名右空字数，d=日期右空字数：
+  //   dateW <= sigW：s=2，d = sigW - dateW        （日期首字比署名首字右移2字）
+  //   dateW >  sigW：d=2，s = 2 + (dateW - sigW)   （署名首字追齐日期首字，日期右空2字）
+  // 每行前导宽度 = 行宽 - 文本宽 - 右空字数（保证右端距行尾 rightBlank 字）
+  const sigRightBlank = 2   // 默认署名右空二字
+  const dateRightBlank = 2  // 日期右空二字基准
+  const sigLines = lines.filter(l => l.type === 'sig')
+  const dateLine = lines.find(l => l.type === 'date')
+  // 署名整体宽度 = 各 sig 行最宽者（无 sig 行则 0）
+  const sigW = sigLines.reduce((m, l) => (l.width > m ? l.width : m), 0)
+  const dateW = dateLine ? dateLine.width : 0
+  const bothPresent = sigLines.length > 0 && dateLine
+  const dateLonger = bothPresent && dateW > sigW
+
+  // 计算署名整体的右空字数（所有 sig 行共用）与日期的右空字数
+  const sigRightBlankFinal = bothPresent
+    ? (dateLonger ? dateRightBlank + (dateW - sigW) : sigRightBlank)
+    : sigRightBlank
+  const dateRightBlankFinal = bothPresent
+    ? (dateLonger ? dateRightBlank : (sigW - dateW))
+    : dateRightBlank
+
+  // 计算每行的右空字数
+  for (const line of lines) {
+    if (line.type === 'sig') {
+      line.rightBlank = Math.max(0, sigRightBlankFinal)
+    } else if (line.type === 'date') {
+      line.rightBlank = Math.max(0, dateRightBlankFinal)
+    } else {
+      // 非 sig/date 的辅助行：右空二字兜底
+      line.rightBlank = sigRightBlank
+    }
+  }
 
   //用半角空格实现前导缩进（半角空格宽度约0.5半字符单位）
   //padW 是半字符单位宽度，半角空格数 = padW / 0.5 = padW * 2
@@ -288,8 +333,8 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
   const posUpdates = []
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
-    // 所有行同样的前导空格，彼此左对齐
-    const padW = baseLeft
+    // 前导宽度 = 行宽 - 文本宽度 - 右空字数（保证右端距行尾 rightBlank 字）
+    const padW = Math.max(0, lineCharCount - line.width - line.rightBlank)
     const halfSpaces = Math.round(padW * 2)  // 半角空格数
     let spaces = ''
     for (let j = 0; j < halfSpaces; j++) spaces += ' '  // 半角空格
@@ -341,4 +386,66 @@ export function calcLineCharCount(doc, settings) {
     if (n > 0) return n
   } catch (e) { }
   return 28
+}
+
+/**
+ * "一是"整句加粗：一、二、三、(一)(二)(三)1.2.3.等标题不止本身加粗，
+ * 标题后第一个句号/问号/叹号前的正文也加粗。
+ * 按钮明确功能 = 加粗格式，不改文字内容，合规。
+ */
+export function boldTitleWithTail(doc) {
+  if (!doc) return
+  const fullRange = doc.Content
+  const text = fullRange.Text
+  if (!text) return
+
+  //标题起始模式：一、(一)1. 等
+  const titlePatterns = [h1Pattern, h2Pattern, h3Pattern]
+  const endSymbol = /[。！？]/
+
+  let undoRecord = null
+  try {
+    undoRecord = window.Application.UndoRecord
+    undoRecord.StartCustomRecord('"一是"整句加粗')
+  } catch (e) { }
+
+  try {
+    //逐段扫，找到标题段后，从标题开始加粗到第一个结束符号（含符号）
+    const paragraphs = doc.Paragraphs
+    const count = paragraphs.Count
+    for (let i = 1; i <= count; i++) {
+      let para = null
+      try { para = paragraphs.Item(i) } catch (e) { continue }
+      if (!para) continue
+      const paraText = para.Range.Text.replace(/[\r\n]+$/, '')
+      if (!paraText) continue
+      //是否标题开头
+      let isTitle = false
+      for (const pat of titlePatterns) {
+        if (pat && pat.test(paraText)) { isTitle = true; break }
+      }
+      if (!isTitle) continue
+
+      //从标题段起点开始，找第一个结束符号（跨段也找，但限制最多扫 500 字避免越界）
+      const paraStart = para.Range.Start
+      const scanText = text.substring(paraStart - fullRange.Start, paraStart - fullRange.Start + 500)
+      let endIdx = -1
+      for (let j = 0; j < scanText.length; j++) {
+        if (endSymbol.test(scanText.charAt(j))) { endIdx = j; break }
+      }
+      if (endIdx < 0) continue  //无结束符号，跳过
+
+      //加粗 [paraStart, paraStart + endIdx + 1]（含结束符号）
+      try {
+        const rng = doc.Range(paraStart, paraStart + endIdx + 1)
+        rng.Font.Bold = true
+      } catch (e) { }
+    }
+  } catch (e) {
+    console.warn('[boldTitleWithTail] failed:', e)
+  } finally {
+    if (undoRecord) {
+      try { undoRecord.EndCustomRecord() } catch (e2) { }
+    }
+  }
 }

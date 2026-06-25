@@ -242,16 +242,38 @@ export function detectElements(doc, settings) {
   const used = new IntervalSet()  // 已识别区间集合
   const result = []
 
-  //--- 记忆预认领：用户曾手动调整过的文本→类型映射 ---
-  // 按段扫，若段文本在记忆中，直接认领该段
+  //--- 记忆预认领：用户曾手动调整过的 text→{type, length} 映射 ---
+  // 按段扫，逐字比对：段文本与记忆 text 取最长公共前缀，
+  // 若公共前缀 >= 记忆 length，则按记忆 type 认领该段 length 长度；
+  // 不相符（前缀 < 记忆 length 或记忆格式旧/损坏）则不认领，重新走检测规则。
   const memory = loadTypeMemory()
-  const memoryKeys = Object.keys(memory)
+  const memoryKeys = Object.keys(memory).filter(k => k && k[0] !== '_')
   if (memoryKeys.length > 0) {
     const paras = scanAllParagraphs(baseTxt)
     for (const p of paras) {
-      if (p.text in memory) {
-        result.push({ start: p.start, length: p.length, type: memory[p.text] })
-        used.add(p.start, p.start + p.length)
+      for (const key of memoryKeys) {
+        const entry = memory[key]
+        // 兼容旧格式：纯字符串 "text" → "type"
+        const memType = typeof entry === 'string' ? entry : (entry && entry.type)
+        const memLen = typeof entry === 'string' ? key.length : (entry && typeof entry.length === 'number' ? entry.length : key.length)
+        if (!memType) continue
+        // 拦截 length<=0 的记忆条目：matchedLen=0 时保留原 length 但未截断，
+        // 此类记忆无有效区间，认领会产生空条
+        if (memLen <= 0) continue
+        // 逐字比对：取 p.text 与 key 的最长公共前缀
+        let common = 0
+        const maxCmp = Math.min(p.text.length, key.length)
+        for (let i = 0; i < maxCmp; i++) {
+          if (p.text.charAt(i) === key.charAt(i)) common++
+          else break
+        }
+        // 相符（公共前缀 >= 记忆长度）：认领，按记忆 length 截取
+        if (common >= memLen && common > 0) {
+          result.push({ start: p.start, length: memLen, type: memType })
+          used.add(p.start, p.start + memLen)
+          break  // 同段只认领一条记忆
+        }
+        // 不相符：保留记忆但不认领，重新走检测规则（记忆不删，等用户下次微调刷新）
       }
     }
   }
@@ -300,7 +322,6 @@ export function detectElements(doc, settings) {
         break
       }
     }
-    console.log('[detect] authorInfo前置: titleEnd=', titleEnd, 'titleParaIdx=', titleParaIdx, 'paras总数=', paras.length)
     if (titleParaIdx >= 0) {
       // 从 title 后一段开始，空行隔开，最多看 6 行
       let i = titleParaIdx + 1
@@ -311,8 +332,6 @@ export function detectElements(doc, settings) {
         const p = paras[i]
         if (used.contains(p.start, p.start + p.length)) { i++; continue }
         const t = p.text
-        console.log('[detect] authorInfo前置 看 paras[', i, ']=', JSON.stringify(t), 'looked=', looked)
-        // 遇到一级/二级/三级标题 → 立即中断，不吞标题
         // 遇到一级/二级/三级标题 → 立即中断，不吞标题
         // 但日期（如 2026.05）会匹配 h3Pattern(^\d+\.)，需排除：日期不算标题，不 break
         if (h1Pattern.test(t) || h2Pattern.test(t) || h4Pattern.test(t)) break
@@ -323,7 +342,6 @@ export function detectElements(doc, settings) {
         if (isClosingFormula(t)) break
         // 必须是发言人或日期格式才认领
         if (isSpeechSignature(t) || datePattern.test(t)) {
-          console.log('[detect] authorInfo前置 认领 authorInfo:', JSON.stringify(t))
           result.push({ start: p.start, length: p.length, type: 'authorInfo' })
           used.add(p.start, p.start + p.length)
           looked++
@@ -332,13 +350,11 @@ export function detectElements(doc, settings) {
           // 非发言人/日期格式的短行，可能是单位名等，也认成 authorInfo（居中）
           // 但避免吞正文：只在前 3 行内收，且不满行、不像标题
           if (looked < 3 && t.length <= 30 && !isTitleLike(t)) {
-            console.log('[detect] authorInfo前置 else认领 authorInfo:', JSON.stringify(t))
             result.push({ start: p.start, length: p.length, type: 'authorInfo' })
             used.add(p.start, p.start + p.length)
             looked++
             i++
           } else {
-            console.log('[detect] authorInfo前置 break:', JSON.stringify(t))
             break
           }
         }

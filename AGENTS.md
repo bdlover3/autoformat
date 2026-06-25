@@ -15,10 +15,11 @@ WPS Office JS add-in (`wpsjs`) that one-click formats Chinese 公文 (official d
 - `src/main.js:10` sets `window.ribbon = ribbon` at module top level. WPS calls `ribbon.OnAddinLoad` immediately after parsing `public/ribbon.xml`; if you move this assignment into `onMounted` or any async hook the ribbon tab silently disappears (regression documented in `.codebuddy/memory/2026-05-31.md`).
 - Entry points the framework calls (do not rename without updating `public/ribbon.xml`):
   - `OnAddinLoad`, `OnAction`, `GetImage`, `OnGetEnabled`, `OnGetVisible`, `OnGetLabel` — exported as default in `src/components/ribbon.js`.
-- Vue routes: `/dialog`, `/fontwarning`, `/taskpane` are opened via `Application.ShowDialog` (modals). `/formatpanel` is shown in a **dynamically-created task pane** via `Application.CreateTaskPane(url)` — NOT a `<Form>` manifest element (which doesn't create a visible panel in this WPS version). `vue-router` uses **hash history** because WPS loads the bundle via `file://` (see `src/router/index.js`, `src/components/js/util.js` `GetRouterHash`). Keep `base: './'` in `vite.config.js` — absolute paths break the file:// load.
-- All other dialogs (settings `/dialog`, font warning `/fontwarning`) still use `Application.ShowDialog`. Only the format panel uses task-pane navigation.
+- Vue routes: `/dialog`, `/fontwarning`, `/taskpane` are opened via `Application.ShowDialog` (modals). `/formatpanel` is shown in a **dynamically-created task pane** via `Application.CreateTaskPane(url)` — NOT a `<Form>` manifest element (which doesn't create a visible panel in this WPS version). `/memory` is opened via `Application.ShowDialog` (记忆管理面板). `vue-router` uses **hash history** because WPS loads the bundle via `file://` (see `src/router/index.js`, `src/components/js/util.js` `GetRouterHash`). Keep `base: './'` in `vite.config.js` — absolute paths break the file:// load.
+- All other dialogs (settings `/dialog`, font warning `/fontwarning`, memory `/memory`) still use `Application.ShowDialog`. Only the format panel uses task-pane navigation.
 - `manifest.xml` is copied to the build via the `wpsjs/vite_plugins` `copyFile` plugin. Updating add-in name/description requires editing `manifest.xml` (root), not anything in `dist/`. The `<Form>` element must stay or the task pane disappears.
-## 核心工作思路
+
+## 核心工作思路
 
 整个排版系统建立在一个抽象层上，后续所有检测/格式化逻辑都遵循这套抽象。
 
@@ -54,11 +55,27 @@ WPS Office JS add-in (`wpsjs`) that one-click formats Chinese 公文 (official d
 2. `applySpecialFormat` —— 遍历 result 指针集合，用 `doc.Range(start, start+length)` 精准覆盖特殊元素格式
 3. `applyFooterAlignment` —— 落款/日期走字符宽度对齐（仍用指针定位段落，但只调段落属性 + 前导空格，不动字体区间）
 
-### 6. 面板微调的是位置指针，与文章内容解耦
+### 6. 面板微调：逐字比对 + 灰色提示 + 记忆写回
 
-- FormatPanel 显示的元素 = result 指针集合的可视化。用户看到的是"某位置是什么类型"，改的是"某位置该是什么类型"。
-- 改类型：修改该指针的 `type`，重新走 `applySpecialFormat` 即可，不动文本内容。
-- 改文本：用户编辑元素文字属于"改内容"，按 GB/T 9704 公文标准与本项目"只调格式不改内容"原则，面板编辑文本写回文档走单独受控路径（落款/日期空格对齐是唯一例外）。
+微调面板（FormatPanel）是用户调教排版结果的核心入口，支持**改类型**和**改文本**两条路径。改文本走"逐字比对"受控流程，不违反"只调格式不改内容"原则（不删字、不改字，只刷格式属性 + 灰色提示）。
+
+**微调核心逻辑（6 步）：**
+
+1. **用户可编辑面板上的文字**：FormatPanel 的元素文字是 `contenteditable`，用户可改文本字段。
+2. **特殊元素文字发生变化后，去和原文对应起始位置开始逐字比对**：面板 apply 时，主线程 `mergePanelEdits` 调 `matchDocPrefix(doc, start, panelText)`，从 doc 的 `start` 位置起逐字和面板 text 比对。
+3. **一直到第一个不相同的字或结束为止**：`matchDocPrefix` 返回最长公共前缀字符数 `matchedLen`。
+4. **记录匹配的长度**，分两侧处理：
+   - **a. 面板侧**：此长度内文字保持原样，超过此长度的部分**变灰色**提示用户超出部分与原文不一致。实现：`matched: false` 标记 + FormatPanel 的 `.text-muted { color: #bbb }` 样式。
+   - **b. 原文侧**：原文对应位置按 `matchedLen` 保持对应元素格式（一般不变），超过 `matchedLen` 处**变回正文格式**（字体/字号/加粗刷回仿宋三号非加粗），**唯独不处理缩进**（因为缩进会影响整行）。实现：`mergePanelEdits` 对 `[start+matchedLen, start+length]` 区间刷正文格式，`length` 截断为 `matchedLen`。
+5. **用户修改的列入记忆**：`recordTypeChanges` 把用户调整过的元素写入 `typememory.json`，记忆格式 `{ text: { type, length } }` —— 记录"某位置有多长属于某特殊格式，文字是什么"。
+6. **下次一键排版时，遇到记忆位置逐字比对**：`detect.js` 记忆预认领对每段每条记忆取最长公共前缀：
+   - **相符**（公共前缀 >= 记忆 length）→ 按记忆 type 认领该段 length 长度，跳过正则检测。
+   - **不相符**（前缀 < 记忆 length）→ 不认领，重新走检测规则，记忆保留（等用户下次微调刷新）。
+
+**关键不变量：**
+- `mergePanelEdits` 推入的元素带 `manual: true`，`applySpecialFormat` 据此跳过 `matchDetect` 正则核对（尊重用户手动标记，不被规则拒绝刷回正文）。
+- `matched: false` 仅影响面板显示（灰色），不影响格式化（格式化由 `manual` + `matchDocPrefix` 截断后的 length 决定）。
+- 记忆格式 `{ text: { type, length } }` 向后兼容旧格式（纯字符串 `"type"`），`detect.js` 和 `MemoryPanel.vue` 都做了兼容处理。
 
 ### 数据流
 
@@ -83,15 +100,17 @@ doc.Range(start, start+length) 精准格式化，不扩段
 
 ```
 src/components/
-  ribbon.js              ← 调度层：按钮回调、设置读写、面板轮询
+  ribbon.js              ← 调度层：按钮回调、设置读写、面板通讯
   js/
+    version.js           ← 版本号唯一真相源（VERSION 常量）
     rules.js             ← 纯声明式规则表（检测规格 + 格式化规格）
     detect.js            ← 规则解释执行：检测特殊元素
     format.js            ← 规则解释执行：格式化特殊元素
     page.js              ← 页面设置：边距、页码、清除格式
     docops.js            ← 文档操作：段落拆分、删除空行、标题换行
-    signature.js         ← 署名检测（独立按钮）
+    signature.js         ← 发言人检测（当前未调用，保留备用）
     patterns.js          ← 正则模式、字符宽度测量、文本判断函数
+    typememory.js        ← 类型记忆模块（记忆管理面板的读写/记录/清空）
     util.js              ← WPS 工具函数（URL路径、路由哈希）
     systemdemo.js        ← WPS SDK 模板代码
     dialog.js            ← 设置对话框辅助
@@ -103,7 +122,7 @@ src/components/
 
 | 字段 | 说明 |
 |------|------|
-| `type` | 类型标识（唯一键）：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/signature/sig/date |
+| `type` | 类型标识（唯一键）：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/authorInfo/sig/date |
 | `label` | 面板显示名 |
 | `priority` | 检测优先级（越小越先；body 无 priority） |
 | `detect` | 检测规格对象（由 detect.js 的 `matchDetect` 解释） |
@@ -140,18 +159,42 @@ src/components/
 ## Format panel（微调面板）
 
 - `FormatPanel.vue` at route `/formatpanel`，通过 `Application.CreateTaskPane` 创建侧边面板（宽度 220px，DockPosition=0 右侧停靠）。
-- 面板与主窗口不共享 window，**通过 `BroadcastChannel('wps_format_panel')` 即时双向通讯**（不再使用 PluginStorage 轮询）：
-  - 面板挂载后主动发 `{type:'hello'}`，主线程 `handlePanelMessage` 收到即推送 `{type:'init', elements, footerMissing}`（初始数据 + 落款缺失标志）。
-  - 面板编辑/改类型后发 `{type:'apply', elements}`，主线程重新执行 `applyBodyFormat` + `applySpecialFormat` + `boldEnumerations`，并回推 `{type:'updateElements', elements}` 同步位置偏移。
+- 面板内容：**纯元素列表**（按公文头部/正文标题/落款区分组）+ 点标签弹出"调整为"右键菜单改类型(含"正文"选项) + 元素文字 `contenteditable` 可编辑 + 底部"取消排版/关闭"按钮。不包含功能区按钮、常用设置等——那些由功能区按钮承担。
+- 面板与主窗口不共享 window，**通过 `BroadcastChannel('wps_format_panel')` 即时双向通讯**：
+  - 面板挂载后主动发 `{type:'hello'}`，主线程 `handlePanelMessage` 收到即推送 `{type:'init', elements, footerMissing, missingFonts}`（初始数据 + 落款缺失标志 + 字体缺失列表）。
+  - 面板编辑/改类型后发 `{type:'apply', elements}`，主线程走 `mergePanelEdits`（删旧+插新+逐字比对+灰色标记）→ `applyBodyFormat` + `applySpecialFormat` + `boldEnumerations`，并回推 `{type:'updateElements', elements}` 同步位置偏移和 `matched`/`matchedLen` 标志。
   - 面板发 `{type:'cancel'}` → 主线程 `undoFormatDocument`；`{type:'close'}` → 仅关闭面板。
-- **"未检测到落款或发言人"提示**：不再用 `alert` 打断，`autoFormatDocument` 检测后设置模块变量 `footerMissing`，随 `init` 消息推给面板，面板顶部渲染橙色提示条。
+  - 面板发 `{type:'disableFontWarning'}` → 主线程写 `settings.disableFontWarning=true` 永久关闭字体缺失提示。
+  - 面板发 `{type:'disableFooterWarning'}` → 主线程写 `settings.disableFooterWarning=true` 永久关闭落款缺失提示。
+- **微调核心逻辑见上文 §6**：逐字比对 + 超长灰色提示 + 超长刷回正文（不动缩进）+ 记忆写回。
+- **面板编辑机制**：`contenteditable` + `:ref` 收集 DOM + 非响应式 `pendingText` 存编辑中文本（不触发 Vue 重渲染，光标稳定）；仅失焦/回车提交，去掉 debounce；`updateElements` 推回时用 `nextTick` + `data-idx` 反查 DOM 重设 innerHTML 显示黑/灰双色。
+- **提示条**：落款缺失/字体缺失各一条橙色提示，各有 ✕ 关闭和"不再提示"按钮(永久关闭写 settings)；`init` 推送时重置 dismissed 状态。
 - **防重复面板**：`openFormatPanel` 开头检查 `currentTaskPane`，若已存在先关闭旧面板并清理 `currentHealthTimer` 和 `panelBroadcastChannel`，再创建新面板。模块级变量 `currentTaskPane`、`currentHealthTimer`、`panelBroadcastChannel` 跟踪当前面板状态。
 - **健康检查**：`currentHealthTimer` 每 2s 一次，仅检测文档切换/关闭（不再轮询 action）；无跨窗口事件能替代此轻量定时器。
-- 12 个元素类型：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/signature/sig/date。
+- 12 个元素类型：body/docNumber/title/subtitle/attachment/h1/h2/h3/addressee/authorInfo/sig/date。
 
-## 其他独立按钮
+## Ribbon 按钮分组
 
-- `btnDetectSignature` / `btnRemoveBlankLines` / `btnSplitTitle` keep their original logic — they do NOT route through the element detection system.
+功能区分为 4 组：
+
+| 组 | 按钮 | 说明 |
+|----|------|------|
+| 一键排版 | `btnAutoFormat` 一键排版、`btnUndoFormat` 一键恢复、(标记元素/插入落款)、(标题后换行/删除全部空行)(删除标题末符号/"一是"整句加粗)、`btnDetectSignature` 记忆格式管理 | 核心排版与微调 |
+| 功能 | `btnFormatSettings` 固定格式设置、`btnCheckUpdate` 检查更新、`btnAbout` 关于 | 设置与杂项 |
+
+- `btnInsertSignature` 打开落款库对话框（`InsertSignature.vue`，路由 `/insertsig`）：0 个落款提示、1 个直接插入光标处、多个弹窗选择。落款库存储在 `AppDataPath\WPSAutoFormat\signatures.json`，管理见 `js/signature.js`。
+- `btnMarkElement` 打开标记对话框（`MarkElement.vue`，路由 `/markelement`）：取当前选区，用户选类型后走 `addSpecialElement` 统一添加流程（含写入记忆）。
+- `btnDetectSignature` 打开记忆管理面板（`MemoryPanel.vue`，路由 `/memory`），可查看/删除/清空类型记忆。
+- `btnRemoveTitleEndSymbol` 删除标题末尾结束符号（遍历全文标题，删末尾。！？；等），见 `docops.js` `removeTitleEndSymbols`。
+- `btnBoldTitleWithTail` "一是"整句加粗：标题+后文第一句加粗，见 `format.js` `boldTitleWithTail`。
+
+## 添加/删除特殊元素统一流程
+
+- **添加** `addSpecialElement(doc, start, length, type)`：移除重叠旧元素 → push 新元素(manual:true) → 重格式化 → 写记忆 → 刷新面板。
+- **删除**(标记为正文)：`mergePanelEdits` body 分支移除元素 + `deleteTypeMemory` 删记忆；刷回正文由 `handlePanelMessage` 的 `applyBodyFormat` 统一完成。
+- **面板微调** `mergePanelEdits`：删旧+插新，逐字比对算 matchedLen，决定 matched/matchedLen/length；重格式化/刷面板/写记忆由 `handlePanelMessage` 统一收尾。
+- `btnDetectSignature` 打开记忆管理面板（`MemoryPanel.vue`，路由 `/memory`），可查看/删除/清空类型记忆。
+- `btnRemoveBlankLines` / `btnSplitTitle` 保持独立逻辑，不经过元素检测系统。
 
 ## 关键不变量
 
@@ -162,14 +205,14 @@ src/components/
 
 ## Ribbon button registry
 
-`public/ribbon.xml` lists buttons (in display order): `btnAutoFormat`, `btnUndoFormat`, `btnDetectSignature`, `btnRemoveBlankLines`, `btnSplitTitle`, `btnFormatSettings`, `btnCheckUpdate`, `btnAbout`. Adding/removing a button requires editing both `ribbon.xml` AND the `OnAction` switch + `GetImage` switch in `ribbon.js`.
+`public/ribbon.xml` lists buttons in 2 groups (一键排版/功能). Adding/removing a button requires editing both `ribbon.xml` AND the `OnAction` switch + `GetImage` switch in `ribbon.js`.
 
 ## Conventions
 
 - 2-space indent, single quotes, no semicolons in JS (Prettier default + `@vue/eslint-config-prettier`). Do **not** add semicolons; existing code is consistent.
 - Comments throughout the codebase are in Chinese — match the existing language when adding nearby comments.
 - Hard-coded magic numbers (font sizes 16/22, line spacing 28.9, margins 37/35/28/26, page-number style `57`, alignment enums) come from the GB/T 9704 公文 standard. Do not "clean up" these values.
-- `CURRENT_VERSION` in `ribbon.js`, `version` in `package.json`, the About-dialog string, and `docs/index.html` must all be bumped together on release. `version.txt` at `https://wpsautoformat.netlify.app/version.txt` drives the in-app update check.
+- **版本号管理**：`src/components/js/version.js` 导出 `VERSION` 常量，是版本号的**唯一真相源**。`ribbon.js`（检查更新/关于对话框）和 `Dialog.vue`（设置面板版本显示）均 import 此常量，不得硬编码。`package.json` 的 `version` 和 `docs/index.html` 的 JSON 字段无法 import JS，发版时需手动同步。`version.txt` at `https://wpsautoformat.netlify.app/version.txt` drives the in-app update check.
 - **Font warning dialog** (`FontWarning.vue`, route `/fontwarning`): when required fonts are missing, `checkFontsOncePerSession` calls `Application.ShowDialog` to let the user choose replacements. The dialog reads from `window.__fontDialogPending`, stores result in `window.__fontDialogResult`, and calls `window.close()`. If the user checks "以后也使用相同配置", `fontReplacements` is persisted in settings.
 - **SVG ribbon icons** live in `public/images/`, numbered 1-7 + `newFromTemp.svg`. Every button needs an entry in both `public/ribbon.xml` and the `GetImage` switch in `ribbon.js`. Icon files use WPS color classes: `skinbaseDark` (gray body), `skinthemeDark` (blue accent).
 

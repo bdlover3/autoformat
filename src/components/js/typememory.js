@@ -99,6 +99,9 @@ export function recordTypeChanges(oldElements, newElements, doc) {
   for (const el of newElements) {
     const t = getText(el)
     if (!t || !el || !el.type) continue
+    // 跳过 length=0 的元素：matchedLen=0 时保留原 length 但 matched=false，
+    // 此类元素无有效区间，不写入记忆（否则下次排版预认领会产生空条）
+    if (typeof el.length === 'number' && el.length <= 0) continue
     const oldType = oldMap[t]
     // 类型从 X 变为 Y（含新增元素）
     if (oldType !== el.type) {
@@ -111,7 +114,9 @@ export function recordTypeChanges(oldElements, newElements, doc) {
         }
         posIndex[posKey] = t
       }
-      memory[t] = el.type
+      // 记忆格式：{ text: { type, length } } —— 记录类型 + 匹配长度
+      // length 用于下次排版时逐字比对，超过此长度部分不认领
+      memory[t] = { type: el.type, length: typeof el.length === 'number' ? el.length : t.length }
       changed = true
     }
   }

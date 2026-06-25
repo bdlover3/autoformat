@@ -198,7 +198,6 @@ export function splitTitleParagraph() {
       }
     } catch (e) { }
 
-    let splitCount = 0
     for (const el of titles) {
       if (typeof el.start !== 'number' || typeof el.length !== 'number') continue
       const titleEnd = el.start + el.length  // 标题末尾位置
@@ -247,12 +246,57 @@ export function splitTitleParagraph() {
             tailRange.ParagraphFormat.FirstLineIndent = 0
           }
         } catch (e) { }
-        splitCount++
       } catch (e) { }
     }
-    console.log('[splitTitleParagraph] 共拆分', splitCount, '个标题')
   } catch (e) {
     console.warn('[splitTitleParagraph] failed:', e)
+  } finally {
+    if (undoRecord) {
+      try { undoRecord.EndCustomRecord() } catch (e2) { }
+    }
+  }
+}
+
+/**
+ * 删除标题末尾符号（按钮入口）：遍历全文，对每个像标题的段落，
+ * 若末尾是结束符号（。！？等）则删除该符号。
+ * 与 truncateTitleByEndSymbol 不同：本函数不拆段，只删末尾符号，纯改内容。
+ * 按钮明确功能 = 删字，属于"删除标题末符号"按钮的合规例外。
+ */
+export function removeTitleEndSymbols() {
+  const doc = window.Application && window.Application.ActiveDocument
+  if (!doc) return
+  const paragraphs = doc.Paragraphs
+  const count = paragraphs.Count
+  if (count === 0) return
+
+  let undoRecord = null
+  try {
+    undoRecord = window.Application.UndoRecord
+    undoRecord.StartCustomRecord('删除标题末符号')
+  } catch (e) { }
+
+  try {
+    //倒序遍历避免删字导致索引漂移
+    for (let i = count; i >= 1; i--) {
+      let para = null
+      try { para = paragraphs.Item(i) } catch (e) { continue }
+      if (!para) continue
+      const text = para.Range.Text.replace(/[\r\n]+$/, '')
+      if (!text) continue
+      //只处理像标题的段落（标题、一二三级标题等）
+      if (!isTitleLike(text)) continue
+      //末尾是结束符号则删除
+      const lastChar = text.charAt(text.length - 1)
+      if (findFirstEndSymbol(lastChar) >= 0 || /[。！？；;．]/.test(lastChar)) {
+        try {
+          const rng = doc.Range(para.Range.Start + text.length - 1, para.Range.Start + text.length)
+          rng.Delete()
+        } catch (e) { }
+      }
+    }
+  } catch (e) {
+    console.warn('[removeTitleEndSymbols] failed:', e)
   } finally {
     if (undoRecord) {
       try { undoRecord.EndCustomRecord() } catch (e2) { }

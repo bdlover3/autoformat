@@ -32,6 +32,16 @@ const router = createRouter({
       path: '/memory',
       name: '记忆管理',
       component: () => import('../components/MemoryPanel.vue')
+    },
+    {
+      path: '/insertsig',
+      name: '插入落款',
+      component: () => import('../components/InsertSignature.vue')
+    },
+    {
+      path: '/markelement',
+      name: '标记元素',
+      component: () => import('../components/MarkElement.vue')
     }
   ]
 })

@@ -3,11 +3,12 @@ import SystemDemo from './js/systemdemo.js'
 
 //模块导入
 import { detectElements, getSegmentText } from './js/detect.js'
-import { applyBodyFormat, applySpecialFormat, boldEnumerations } from './js/format.js'
+import { applyBodyFormat, applySpecialFormat, boldEnumerations, boldTitleWithTail } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
-import { removeBlankLines, splitTitleParagraph } from './js/docops.js'
-import { detectAndFormatSpeechSignature } from './js/signature.js'
-import { loadTypeMemory, recordTypeChanges, clearTypeMemory } from './js/typememory.js'
+import { removeBlankLines, splitTitleParagraph, removeTitleEndSymbols } from './js/docops.js'
+import { loadTypeMemory, recordTypeChanges, deleteTypeMemory } from './js/typememory.js'
+import { loadSignatures } from './js/signature.js'
+import { VERSION } from './js/version.js'
 
 //默认格式设置
 const DEFAULT_SETTINGS = {
@@ -17,6 +18,9 @@ const DEFAULT_SETTINGS = {
   h2FontSize: 16,          // 二级标题 三号 = 16磅
   h3FontSize: 16,          // 三级标题 三号 = 16磅
   h4FontSize: 16,          // 四级标题 三号 = 16磅
+  h1Bold: false,           // 一级标题加粗
+  h2Bold: false,           // 二级标题加粗
+  h3Bold: false,           // 三级标题加粗
   titleFont: '方正小标宋简体',
   bodyFont: '仿宋_GB2312',
   h1Font: '黑体',
@@ -32,6 +36,7 @@ const DEFAULT_SETTINGS = {
   pageNumberPosition: 'center',  // 页码位置
   clearFormatting: true,    // 是否先清除所有格式
   disableFontWarning: false, // 是否永久屏蔽缺失字体提示
+  disableFooterWarning: false, // 是否永久屏蔽落款缺失提示
   fontReplacements: {},        // 缺失字体替代品映射
   autoSplitSubtitle: false     // 一二三级标题后自动换行
 }
@@ -53,6 +58,9 @@ let fontWarningShownInSession = false
 
 //落款/发言人是否缺失（autoFormatDocument 设置，openFormatPanel 推送给面板）
 let footerMissing = false
+
+//面板字体缺失提示（autoFormatDocument 检测，推送给面板显示；面板可点"不再提示"永久关闭）
+let panelMissingFonts = []
 
 function getSettings() {
   const result = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
@@ -328,8 +336,25 @@ function OnAction(control) {
       removeBlankLines()
       break
     }
+    case 'btnInsertSignature': {
+      insertSignature()
+      break
+    }
+    case 'btnMarkElement': {
+      markSelectedElement()
+      break
+    }
     case 'btnSplitTitle': {
       splitTitleParagraph()
+      break
+    }
+    case 'btnRemoveTitleEndSymbol': {
+      removeTitleEndSymbols()
+      break
+    }
+    case 'btnBoldTitleWithTail': {
+      const doc = window.Application.ActiveDocument
+      if (doc) boldTitleWithTail(doc)
       break
     }
     case 'btnFormatSettings': {
@@ -351,7 +376,7 @@ function OnAction(control) {
       break
     }
     case 'btnAbout': {
-      const aboutInfo = '公文排版助手\n\n版本：1.1.0 \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。\n\n项目地址:https://gitee.com/rainsoft0456/wpsautoformat'
+      const aboutInfo = `公文排版助手\n\n版本：${VERSION} \n版权所有人：小明哥哥\n\n本工具用于帮助快速格式化公文文档，提供一键排版功能。\n\n项目地址:https://gitee.com/rainsoft0456/wpsautoformat`
       alert(aboutInfo)
       break
     }
@@ -409,14 +434,15 @@ function handlePanelMessage(msg) {
 
   console.log('[handlePanelMessage] msg.type =', msg.type)
 
-  //面板挂载后主动请求初始数据：主线程即时推送 elements + footerMissing 标志
+  //面板挂载后主动请求初始数据：主线程即时推送 elements + footerMissing + missingFonts
   if (msg.type === 'hello') {
     try {
       if (panelBroadcastChannel) {
         panelBroadcastChannel.postMessage({
           type: 'init',
           elements: JSON.parse(JSON.stringify(withTextSnapshot(specialElements))),
-          footerMissing: footerMissing
+          footerMissing: footerMissing,
+          missingFonts: panelMissingFonts
         })
       }
     } catch (e) {
@@ -459,11 +485,14 @@ function handlePanelMessage(msg) {
         }
       }
       //无论位置是否变化，都将最新数据推回面板（类型切换后格式/位置都可能变化）
+      //注意：mergePanelEdits 已保留用户编辑的 text 和 matchedLen，
+      //这里不能再用 withTextSnapshot 覆盖 text（否则用户面板编辑的内容会被 doc 原文覆盖丢失），
+      //只同步 start/length/type/matched/matchedLen 等位置与状态字段。
       try {
         if (panelBroadcastChannel) {
           panelBroadcastChannel.postMessage({
             type: 'updateElements',
-            elements: JSON.parse(JSON.stringify(withTextSnapshot(specialElements)))
+            elements: JSON.parse(JSON.stringify(specialElements))
           })
         }
       } catch (e2) { }
@@ -475,49 +504,224 @@ function handlePanelMessage(msg) {
     if (panelUndo) {
       try { panelUndo.EndCustomRecord() } catch (e2) { }
     }
-  } else if (msg.type === 'runAction') {
-    // 面板按钮触发的操作：执行对应函数
-    try {
-      const actions = {
-        autoFormat: () => autoFormatDocument(),
-        undoFormat: () => undoFormatDocument(),
-        splitTitle: () => splitTitleParagraph(),
-        removeBlank: () => removeBlankLines(),
-        detectSignature: () => detectAndFormatSpeechSignature(getSettings, applySpecialFormat),
-        openSettings: () => { try { window.Application.ShowDialog(Util.GetUrlPath() + Util.GetRouterHash() + '/dialog', '调整固定格式', 400 * window.devicePixelRatio, 500 * window.devicePixelRatio, true) } catch (e) { } },
-        clearMemory: () => { clearTypeMemory() }
-      }
-      const fn = actions[msg.action]
-      if (fn) fn()
-    } catch (e) { console.warn('[handlePanelMessage] runAction failed:', e) }
-  } else if (msg.type === 'saveSettings') {
-    // 面板常用设置保存
-    try {
-      const updated = getSettings()
-      if (msg.settings) Object.assign(updated, msg.settings)
-      saveSettings(updated)
-    } catch (e) { }
-  } else if (msg.type === 'loadSettings') {
-    // 面板请求当前设置
-    try {
-      const s = getSettings()
-      if (panelBroadcastChannel) {
-        panelBroadcastChannel.postMessage({
-          type: 'loadSettings',
-          settings: {
-            enablePageNumber: s.enablePageNumber,
-            clearFormatting: s.clearFormatting,
-            autoSplitSubtitle: s.autoSplitSubtitle
-          }
-        })
-      }
-    } catch (e) { }
   } else if (msg.type === 'cancel') {
     closeFormatPanel()
     undoFormatDocument()
   } else if (msg.type === 'close') {
     closeFormatPanel()
+  } else if (msg.type === 'disableFontWarning') {
+    //面板点"不再提示"：永久关闭字体缺失提示，写入 settings
+    try {
+      const settings = getSettings()
+      settings.disableFontWarning = true
+      saveSettings(settings)
+      panelMissingFonts = []
+    } catch (e) { }
+  } else if (msg.type === 'disableFooterWarning') {
+    //面板点"不再提示"：永久关闭落款缺失提示，写入 settings
+    try {
+      const settings = getSettings()
+      settings.disableFooterWarning = true
+      saveSettings(settings)
+      footerMissing = false
+    } catch (e) { }
   }
+}
+
+//插入落款：检查落款库，0 个提示、1 个直接插入、多个弹窗选择
+function insertSignature() {
+  const doc = window.Application.ActiveDocument
+  if (!doc) {
+    alert('请先打开文档')
+    return
+  }
+  const signatures = loadSignatures()
+  if (signatures.length === 0) {
+    alert('暂无保存的落款。\n\n可点击"插入落款"按钮在弹窗中添加常用落款，或排版后用微调面板的落款识别。')
+    return
+  }
+  if (signatures.length === 1) {
+    insertSignatureText(doc, signatures[0].text)
+    return
+  }
+  //多个落款：弹窗选择，BroadcastChannel 接收选择结果
+  try {
+    const bc = new BroadcastChannel('wps_insert_signature')
+    const timeoutId = setTimeout(() => { try { bc.close() } catch (e) { } }, 60000)
+    bc.onmessage = (event) => {
+      const msg = event.data
+      if (!msg || !msg.type) return
+      if (msg.type === 'insert' && msg.text) {
+        clearTimeout(timeoutId)
+        insertSignatureText(doc, msg.text)
+        try { bc.close() } catch (e) { }
+      }
+    }
+    window.Application.ShowDialog(
+      Util.GetUrlPath() + Util.GetRouterHash() + '/insertsig',
+      '插入落款',
+      460 * window.devicePixelRatio,
+      520 * window.devicePixelRatio,
+      true
+    )
+  } catch (e) { }
+}
+
+//把落款文本插入到光标处（多行落款按段落插入）
+//本按钮的明确功能是插入用户保存的落款内容，属于"插入落款"按钮的合规例外
+function insertSignatureText(doc, text) {
+  if (!text) return
+  let undoRecord = null
+  try {
+    undoRecord = window.Application.UndoRecord
+    undoRecord.StartCustomRecord('插入落款')
+  } catch (e) { }
+  try {
+    const sel = window.Application.ActiveWindow.Selection
+    const lines = String(text).replace(/\r+$/, '').split(/\r?\n/)
+    //多行落款：每行独立成段，按落款格式（右对齐、仿宋）写入
+    const bodyFont = getAvailableFont(getSettings().bodyFont, '仿宋')
+    for (let i = 0; i < lines.length; i++) {
+      const lineText = lines[i]
+      try {
+        if (i > 0) sel.TypeParagraph()
+        if (lineText) {
+          sel.TypeText(lineText)
+          //落款右对齐
+          try { sel.ParagraphFormat.Alignment = 2 } catch (e) { } // 2 = right
+          try { sel.Font.Name = bodyFont } catch (e) { }
+          try { sel.Font.NameAscii = 'Times New Roman' } catch (e) { }
+          try { sel.Font.NameOther = 'Times New Roman' } catch (e) { }
+        }
+      } catch (e) { }
+    }
+  } catch (e) { }
+  if (undoRecord) {
+    try { undoRecord.EndCustomRecord() } catch (e2) { }
+  }
+}
+
+//标记选区为特殊元素：取选区文本，弹窗让用户选类型，回写后重新格式化
+function markSelectedElement() {
+  const doc = window.Application.ActiveDocument
+  if (!doc) {
+    alert('请先打开文档')
+    return
+  }
+  let selText = ''
+  try {
+    const sel = window.Application.ActiveWindow.Selection
+    selText = String(sel.Text || '').replace(/[\r\n]+$/, '').trim()
+  } catch (e) { }
+  if (!selText) {
+    alert('请先在文档中选中要标记的文字，再点此按钮')
+    return
+  }
+  //通过 window 变量把选区文本传给对话框
+  try { window.__markSelectedText = selText } catch (e) { }
+  //BroadcastChannel 接收对话框回填的类型 + 推送选区文本
+  try {
+    const bc = new BroadcastChannel('wps_mark_element')
+    const timeoutId = setTimeout(() => { try { bc.close() } catch (e) { } }, 60000)
+    bc.onmessage = (event) => {
+      const msg = event.data
+      if (!msg || !msg.type) return
+      if (msg.type === 'hello') {
+        //对话框挂载，推送选区文本（跨 window 不共享 window 变量）
+        try { bc.postMessage({ type: 'init', selectedText: selText }) } catch (e) { }
+      } else if (msg.type === 'mark' && msg.elementType) {
+        clearTimeout(timeoutId)
+        applyMarkedElement(msg.elementType)
+        try { bc.close() } catch (e) { }
+      }
+    }
+    window.Application.ShowDialog(
+      Util.GetUrlPath() + Util.GetRouterHash() + '/markelement',
+      '标记为特殊元素',
+      420 * window.devicePixelRatio,
+      480 * window.devicePixelRatio,
+      true
+    )
+  } catch (e) { }
+}
+
+//统一"添加特殊元素"流程（标记元素按钮 / 面板改类型为非body 都走这里）
+//1. 移除 specialElements 中与新区间重叠的旧元素
+//2. push 新元素 {start, length, type, matched:true, manual:true}
+//3. 重新格式化（applyBodyFormat + applySpecialFormat + boldEnumerations）
+//4. 写入记忆 recordTypeChanges——补"手动标记记不住"bug
+//5. 打开/刷新微调面板
+function addSpecialElement(doc, start, length, type) {
+  if (!doc || typeof start !== 'number' || typeof length !== 'number' || length <= 0 || !type) return
+
+  //若尚未排版（specialElements 为空），先执行一次完整排版
+  if (!Array.isArray(specialElements) || specialElements.length === 0) {
+    try {
+      const settings = getSettings()
+      if (settings.clearFormatting) clearAllFormatting(doc)
+      setupPage(doc, settings)
+      specialElements = detectElements(doc, settings)
+      applyBodyFormat(doc, settings, getAvailableFont)
+      applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+      boldEnumerations(doc)
+    } catch (e) { }
+  }
+
+  //保存快照用于记忆记录
+  const oldSnapshot = JSON.parse(JSON.stringify(specialElements))
+
+  //移除与新标记区间重叠的旧元素（避免重复刷格式）
+  const filtered = specialElements.filter(el =>
+    !(el.start < start + length && el.start + el.length > start)
+  )
+  filtered.push({ start, length, type, matched: true, manual: true })
+  specialElements = filtered
+
+  //重新格式化
+  let undoRecord = null
+  try {
+    undoRecord = window.Application.UndoRecord
+    undoRecord.StartCustomRecord('添加特殊元素')
+  } catch (e) { }
+  try {
+    const settings = getSettings()
+    applyBodyFormat(doc, settings, getAvailableFont)
+    applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+    boldEnumerations(doc)
+  } catch (e) { }
+  if (undoRecord) {
+    try { undoRecord.EndCustomRecord() } catch (e2) { }
+  }
+
+  //写入记忆——补"手动标记记不住"bug
+  try { recordTypeChanges(oldSnapshot, specialElements, doc) } catch (e) { }
+
+  //打开/刷新微调面板
+  openFormatPanel(doc)
+}
+
+//统一"删除特殊元素（标记为正文）"流程已并入 mergePanelEdits 的 body 分支：
+//从 specialElements 移除（不插入新元素）+ deleteTypeMemory 删记忆，
+//刷回正文格式由 handlePanelMessage 的 applyBodyFormat 全文刷正文统一完成。
+
+//对话框回填类型后：把选区加入 specialElements 并重新格式化
+function applyMarkedElement(type) {
+  const doc = window.Application.ActiveDocument
+  if (!doc) return
+  try { window.__markSelectedText = null } catch (e) { }
+  if (!type) return
+
+  //取选区起止位置（基于 doc.Range 坐标系，与 specialElements 一致）
+  let selStart = 0, selEnd = 0
+  try {
+    const sel = window.Application.ActiveWindow.Selection
+    selStart = sel.Start
+    selEnd = sel.End
+  } catch (e) { return }
+  if (selEnd <= selStart) return
+
+  //统一走 addSpecialElement（含写入记忆）
+  addSpecialElement(doc, selStart, selEnd - selStart, type)
 }
 
 function autoFormatDocument() {
@@ -558,8 +762,21 @@ function autoFormatDocument() {
     }
 
     //落款/发言人缺失：传给面板显示提示条（不再用 alert 打断）
+    //disableFooterWarning 永久关闭（设置对话框或面板"不再提示"）
     const hasFooter = specialElements.some(el => el.type === 'sig' || el.type === 'date' || el.type === 'authorInfo')
-    footerMissing = !hasFooter
+    try {
+      footerMissing = !hasFooter && !getSettings().disableFooterWarning
+    } catch (e) { footerMissing = !hasFooter }
+
+    //字体缺失检测：填 panelMissingFonts 推送给面板显示提示条（用户可在面板点"不再提示"永久关闭）
+    try {
+      const settings = getSettings()
+      if (!settings.disableFontWarning) {
+        panelMissingFonts = checkRequiredFonts(settings)
+      } else {
+        panelMissingFonts = []
+      }
+    } catch (e) { panelMissingFonts = [] }
 
     checkFontsOncePerSession()
     window.lastFormatTime = new Date().getTime()
@@ -577,7 +794,7 @@ function autoFormatDocument() {
 function openFormatPanel(doc) {
   try {
     //记录面板关联的文档
-    try { currentFormatDocName = doc.FullName } catch (e) { currentFormatDocName = '' }
+    try { currentFormatDocName = doc.FullName || doc.Name || '' } catch (e) { currentFormatDocName = ''; try { currentFormatDocName = doc.Name || '' } catch (e2) { } }
     try { currentFormatDocCaption = window.Application.ActiveWindow.Caption } catch (e) { currentFormatDocCaption = '' }
 
     //销毁旧面板（防止重复创建）
@@ -616,7 +833,7 @@ function openFormatPanel(doc) {
           return
         }
         let activeDocName = ''
-        try { activeDocName = window.Application.ActiveDocument.FullName } catch (e) { }
+        try { activeDocName = window.Application.ActiveDocument.FullName || window.Application.ActiveDocument.Name || '' } catch (e) { try { activeDocName = window.Application.ActiveDocument.Name || '' } catch (e2) { } }
         if (activeDocName !== currentFormatDocName) {
           closeFormatPanel()
           return
@@ -653,38 +870,73 @@ function openFormatPanel(doc) {
 //  找出最长匹配前缀，更新该元素的 start+length 为匹配区间。
 //  未命中部分刷回正文字体大小（不改缩进）。
 //  body 类型元素从 specialElements 移除（回正文格式）。
+//面板微调核心逻辑（删旧 + 插新）：
+//1. 面板某条失焦或用户改类型后，handlePanelMessage 收到 apply 消息调本函数
+//2. 对每条面板传来的 item：取其 start 和面板显示的 text
+//3. 到原文 start 位置逐字比对 text，算出匹配长度 matchedLen
+//4. 删 specialElements 中该 start 的旧元素，插入一条新元素 {start, length:matchedLen, type, matched, matchedLen, manual}
+//   - matchedLen=0（第一个字就不同）：保留原 length，matched=false 整段灰，可恢复
+//   - 0<matchedLen<原 length：length 截断为 matchedLen，matched=false 超长灰
+//   - matchedLen>=原 length：完全匹配，matched=true
+//   - type=body：删除该元素（移出 specialElements），不插入
+//5. 重格式化、刷面板、写记忆由 handlePanelMessage 统一收尾
 function mergePanelEdits(oldList, newList) {
   if (!Array.isArray(newList)) return oldList
   const doc = window.Application.ActiveDocument
+  //以 oldList 为基准（oldList 即当前 specialElements 引用），逐条替换
   const result = []
   for (const item of newList) {
-    if (item.type === 'body') continue  // 选"不是落款"，移出特殊元素
+    const start = item.start
+    if (typeof start !== 'number') continue
+    const old = oldList.find(o => o.start === start)
+    const oldLen = old ? old.length : 0
+
+    //标记为正文 = 删除该特殊元素（不插入新元素）
+    if (item.type === 'body') {
+      //删记忆：避免下次排版又认领回来与"标记为正文"冲突
+      if (doc && old && old.length > 0) {
+        try {
+          const oldText = getSegmentText(doc, start, old.length)
+          if (oldText) deleteTypeMemory(oldText)
+        } catch (e) { }
+      }
+      continue
+    }
+
     const text = (item.text == null ? '' : String(item.text)).trim()
     if (!text) continue  //文本被清空则放弃该段
-    const old = oldList.find(o => o.start === item.start)
-    const start = item.start ?? (old ? old.start : undefined)
-    let length = item.length ?? (old ? old.length : undefined)
-    // 面板编辑微调：逐字比对，更新 length 为最长匹配前缀
-    if (doc && typeof start === 'number' && typeof length === 'number' && text) {
-      const matchedLen = matchDocPrefix(doc, start, text)
-      if (matchedLen < length) {
-        // 未命中部分刷回正文字体大小（不改缩进）
-        try {
-          const rng = doc.Range(start + matchedLen, start + length)
-          rng.Font.Size = 16  // 三号正文
-          rng.Font.Name = '仿宋_GB2312'
-          rng.Font.NameAscii = 'Times New Roman'
-          rng.Font.NameOther = 'Times New Roman'
-          rng.Font.Bold = false
-        } catch (e) { }
-        length = matchedLen
-      }
+
+    //到原文 start 位置逐字比对 text，算出匹配长度
+    let matchedLen = 0
+    if (doc && oldLen > 0) {
+      try { matchedLen = matchDocPrefix(doc, start, text) } catch (e) { matchedLen = 0 }
     }
+
+    //决定新元素的 length 和 matched
+    let newLen, matched
+    if (matchedLen === 0 && oldLen > 0) {
+      //第一个字就不同：保留原 length 不截断，matched=false 整段灰，可恢复
+      newLen = oldLen
+      matched = false
+    } else if (matchedLen > 0 && matchedLen < oldLen) {
+      //部分匹配：length 截断为 matchedLen，matched=false 超长灰
+      newLen = matchedLen
+      matched = false
+    } else {
+      //完全匹配（matchedLen>=oldLen）或无 oldLen（新元素）：用 matchedLen 或 text 长度
+      newLen = matchedLen > 0 ? matchedLen : text.length
+      matched = true
+    }
+
+    //删旧 + 插新（只操作数组，重格式化由 handlePanelMessage 收尾）
     result.push({
       text: text,
       start: start,
-      length: length,
-      type: item.type
+      length: newLen,
+      type: item.type,
+      matched: matched,
+      matchedLen: matchedLen,
+      manual: true  //面板手动改 = 手动标记，跳过正则核对，尊重用户意图
     })
   }
   return result
@@ -730,18 +982,26 @@ function GetImage(control) {
       return 'images/1.svg'
     case 'btnUndoFormat':
       return 'images/2.svg'
-    case 'btnAbout':
+    case 'btnMarkElement':
       return 'images/3.svg'
-    case 'btnDetectSignature':
+    case 'btnInsertSignature':
       return 'images/4.svg'
-    case 'btnRemoveBlankLines':
-      return 'images/5.svg'
     case 'btnSplitTitle':
+      return 'images/5.svg'
+    case 'btnRemoveBlankLines':
       return 'images/6.svg'
-    case 'btnCheckUpdate':
+    case 'btnRemoveTitleEndSymbol':
       return 'images/7.svg'
+    case 'btnBoldTitleWithTail':
+      return 'images/8.svg'
+    case 'btnDetectSignature':
+      return 'images/9.svg'
     case 'btnFormatSettings':
-      return 'images/2.svg'
+      return 'images/10.svg'
+    case 'btnCheckUpdate':
+      return 'images/11.svg'
+    case 'btnAbout':
+      return 'images/12.svg'
     default:
   }
   return 'images/newFromTemp.svg'
@@ -759,7 +1019,6 @@ function OnGetLabel() {
   return ''
 }
 
-const CURRENT_VERSION = '1.1.0'
 const VERSION_URL = 'https://wpsautoformat.netlify.app/version.txt'
 const PROJECT_URL = 'https://gitee.com/rainsoft0456/wpsautoformat'
 
@@ -772,13 +1031,13 @@ async function checkForUpdates() {
     const latestVersion = await response.text()
     const cleanVersion = latestVersion.trim()
 
-    if (cleanVersion !== CURRENT_VERSION) {
-      const result = window.confirm(`检测到新版本：${cleanVersion}\n当前版本：${CURRENT_VERSION}\n\n是否前往下载更新？`)
+    if (cleanVersion !== VERSION) {
+      const result = window.confirm(`检测到新版本：${cleanVersion}\n当前版本：${VERSION}\n\n是否前往下载更新？`)
       if (result) {
         window.Application.Hyperlink(PROJECT_URL)
       }
     } else {
-      alert(`当前已是最新版本：${CURRENT_VERSION}`)
+      alert(`当前已是最新版本：${VERSION}`)
     }
   } catch (error) {
     alert('检查更新失败：' + error.message)

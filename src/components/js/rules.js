@@ -159,6 +159,7 @@ const RULES = [
     formatSpec: {
       fontKey: 'h1FontName',
       fontSizeKey: 'h1FontSize',
+      boldKey: 'h1Bold',
       alignment: 'left',
       firstIndent: 2
     },
@@ -177,6 +178,7 @@ const RULES = [
     formatSpec: {
       fontKey: 'h2FontName',
       fontSizeKey: 'h2FontSize',
+      boldKey: 'h2Bold',
       alignment: 'left',
       firstIndent: 2
     },
@@ -195,6 +197,7 @@ const RULES = [
     formatSpec: {
       fontKey: 'h3FontName',
       fontSizeKey: 'h3FontSize',
+      boldKey: 'h3Bold',
       alignment: 'left',
       firstIndent: 2
     },

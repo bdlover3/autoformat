@@ -87,6 +87,10 @@
           </div>
         </div>
       </div>
+      <div class="form-row">
+        <label>加粗</label>
+        <input type="checkbox" v-model="settings.h1Bold" />
+      </div>
     </div>
 
     <div class="section">
@@ -113,6 +117,10 @@
           </div>
         </div>
       </div>
+      <div class="form-row">
+        <label>加粗</label>
+        <input type="checkbox" v-model="settings.h2Bold" />
+      </div>
     </div>
 
     <div class="section">
@@ -138,6 +146,10 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="form-row">
+        <label>加粗</label>
+        <input type="checkbox" v-model="settings.h3Bold" />
       </div>
     </div>
 
@@ -215,6 +227,13 @@
         <span class="form-hint">（启用后将不再提示字体缺失信息）</span>
       </div>
       <div class="form-row">
+        <label>屏蔽落款缺失提示</label>
+        <input type="checkbox" v-model="settings.disableFooterWarning" />
+      </div>
+      <div class="form-row">
+        <span class="form-hint">（启用后排版面板不再显示"未检测到落款或发言人"提示）</span>
+      </div>
+      <div class="form-row">
         <label>标题后自动换行</label>
         <input type="checkbox" v-model="settings.autoSplitSubtitle" />
       </div>
@@ -226,7 +245,7 @@
     <div class="section footer-info">
       <div class="version-info">
         <span class="version-label">版本：</span>
-        <span class="version-text">1.1.0</span>
+        <span class="version-text">{{ version }}</span>
       </div>
       <div class="source-info">
         <span class="source-label">开源地址：</span>
@@ -242,6 +261,7 @@
 <script>
 import { onMounted, reactive, computed, ref } from 'vue'
 import dlgFunc from './js/dialog.js'
+import { VERSION } from './js/version.js'
 
 const fontSizeMap = {
   42: '初号',
@@ -289,6 +309,9 @@ export default {
       h2FontSize: 16,
       h3FontSize: 16,
       h4FontSize: 16,
+      h1Bold: false,
+      h2Bold: false,
+      h3Bold: false,
       titleFont: '方正小标宋简体',
       bodyFont: '仿宋_GB2312',
       h1Font: '黑体',
@@ -304,6 +327,7 @@ export default {
       pageNumberPosition: 'center',
       clearFormatting: true,
       disableFontWarning: false,
+      disableFooterWarning: false,
       autoSplitSubtitle: false
     })
 
@@ -449,6 +473,7 @@ export default {
     }
 
     return {
+      version: VERSION,
       settings,
       fontList,
       fontSizeOptions,

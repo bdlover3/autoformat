@@ -14,7 +14,7 @@ import {
   h1Pattern, h2Pattern, h3Pattern, h4Pattern,
   datePattern, attachmentPattern, endSymbolPattern,
   isSpeechSignature, isTitleLike, looksLikeOtherPattern,
-  isClosingFormula, measureWidth, findFirstEndSymbol
+  isClosingFormula, isTransitionSentence, measureWidth, findFirstEndSymbol
 } from './patterns.js'
 import { getOrderedSpecialRules, getRuleByType } from './rules.js'
 import { loadTypeMemory } from './typememory.js'
@@ -135,9 +135,11 @@ function scanByParagraph(baseTxt, spec, used) {
     if (i === total || baseTxt.charAt(i) === '\r') {
       const segEnd = (i < total && baseTxt.charAt(i) === '\r') ? i : i
       const raw = baseTxt.substring(paraStart, segEnd)
-      const trimmed = raw.trim()
+      // 显式去掉全角空格 U+3000——JS 的 trim() 不匹配全角空格，
+      // 上次排版塞的前导全角空格会残留，导致 segStart/length/measureWidth 全偏。
+      const trimmed = raw.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '')
       if (trimmed) {
-        const leading = raw.length - raw.trimStart().length
+        const leading = raw.length - raw.replace(/^[\s\u3000]+/, '').length
         const segStart = paraStart + leading
         const segLength = trimmed.length
         if (!used || !used.overlaps(segStart, segStart + segLength)) {
@@ -164,6 +166,8 @@ function scanByParagraph(baseTxt, spec, used) {
               // 否定约束：像标题则跳过
             } else if (spec.negateSpeechSig && isSpeechSignature(trimmed)) {
               // 否定约束：像发言人则跳过
+            } else if (spec.negateTransition && isTransitionSentence(trimmed)) {
+              // 否定约束：是过渡句则跳过
             } else {
               results.push({ start: segStart, length: segLength, text: trimmed })
             }
@@ -195,7 +199,7 @@ function mergeContinuationLines(baseTxt, firstStart, firstLength, maxScanLines, 
     let lineEnd = searchFrom
     while (lineEnd < baseTxt.length && baseTxt.charAt(lineEnd) !== '\r') lineEnd++
     const lineRaw = baseTxt.substring(searchFrom, lineEnd)
-    const lineTrim = lineRaw.trim()
+    const lineTrim = lineRaw.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '')
     if (!lineTrim) break  // 空段中断
     // 续行不能是结束符号开头/包含（标题不能跨句号续行）
     if (endSymbolPattern.test(lineTrim)) break
@@ -269,7 +273,10 @@ export function detectElements(doc, settings) {
         }
         // 相符（公共前缀 >= 记忆长度）：认领，按记忆 length 截取
         if (common >= memLen && common > 0) {
-          result.push({ start: p.start, length: memLen, type: memType })
+          // manual:true 表示用户手动调整过（记忆来源），applySpecialFormat 据此跳过正则核对，
+          // 直接刷记忆 type 的格式——否则 h1→h2 改类型后，"三、政务服务工作"用 h2Pattern 核对不上，
+          // matchDetect 返回 false，刷回正文格式（无缩进），记忆形同虚设。
+          result.push({ start: p.start, length: memLen, type: memType, manual: true })
           used.add(p.start, p.start + memLen)
           break  // 同段只认领一条记忆
         }
@@ -348,8 +355,8 @@ export function detectElements(doc, settings) {
           i++
         } else {
           // 非发言人/日期格式的短行，可能是单位名等，也认成 authorInfo（居中）
-          // 但避免吞正文：只在前 3 行内收，且不满行、不像标题
-          if (looked < 3 && t.length <= 30 && !isTitleLike(t)) {
+          // 但避免吞正文：只在前 3 行内收，且不满行、不像标题、不是过渡句
+          if (looked < 3 && t.length <= 30 && !isTitleLike(t) && !isTransitionSentence(t)) {
             result.push({ start: p.start, length: p.length, type: 'authorInfo' })
             used.add(p.start, p.start + p.length)
             looked++
@@ -478,9 +485,10 @@ function scanAllParagraphs(baseTxt) {
     if (i === total || baseTxt.charAt(i) === '\r') {
       const segEnd = (i < total && baseTxt.charAt(i) === '\r') ? i : i
       const raw = baseTxt.substring(paraStart, segEnd)
-      const trimmed = raw.trim()
+      // 显式去掉全角空格 U+3000——JS 的 trim() 不匹配全角空格
+      const trimmed = raw.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '')
       if (trimmed) {
-        const leading = raw.length - raw.trimStart().length
+        const leading = raw.length - raw.replace(/^[\s\u3000]+/, '').length
         paras.push({ start: paraStart + leading, length: trimmed.length, text: trimmed })
       }
       paraStart = (i < total && baseTxt.charAt(i) === '\r') ? i + 1 : i
@@ -553,7 +561,8 @@ function processFooter(baseTxt, used, result, lineCharCount) {
 export function getSegmentText(doc, start, length) {
   try {
     const rng = doc.Range(start, start + length)
-    return rng.Text.replace(/[\r\n]+$/, '').trim()
+    // 显式去掉全角空格 U+3000——JS 的 trim() 不匹配全角空格
+    return rng.Text.replace(/[\r\n]+$/, '').replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '')
   } catch (e) {
     return ''
   }
@@ -579,5 +588,6 @@ export function matchDetect(text, spec) {
   if (spec.maxLength && text.length > spec.maxLength) return false
   if (spec.negateTitleLike && isTitleLike(text)) return false
   if (spec.negateSpeechSig && isSpeechSignature(text)) return false
+  if (spec.negateTransition && isTransitionSentence(text)) return false
   return true
 }

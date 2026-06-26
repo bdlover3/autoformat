@@ -33,6 +33,16 @@ export function isClosingFormula(text) {
   return false
 }
 
+/** 是否公文过渡句（现将/现就/为…如下/如下：等），发言人检测应排除 */
+export function isTransitionSentence(text) {
+  if (!text) return false
+  // "现将/现就/为…如下/如下：/如下。" 或 "现就…报告如下" 等过渡句
+  if (/^现[将就].{0,40}(如下|如下[：。])/.test(text)) return true
+  if (/^为[了将].{0,40}(如下|如下[：。])/.test(text)) return true
+  if (/^.{0,20}如下[：。]$/.test(text)) return true
+  return false
+}
+
 //--- 通用判定函数 ---
 
 /** 是否发言人格式（讲话稿发言人）：纯姓名2-4字 / 单位+姓名 / 日期 */

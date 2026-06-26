@@ -5,7 +5,7 @@ import SystemDemo from './js/systemdemo.js'
 import { detectElements, getSegmentText } from './js/detect.js'
 import { applyBodyFormat, applySpecialFormat, boldEnumerations, boldTitleWithTail } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
-import { removeBlankLines, splitTitleParagraph, removeTitleEndSymbols } from './js/docops.js'
+import { removeBlankLines, splitTitleParagraph, removeTitleEndSymbols, ensureBlankLineAfterTitle, ensureBlankLinesBeforeFooter } from './js/docops.js'
 import { loadTypeMemory, recordTypeChanges, deleteTypeMemory } from './js/typememory.js'
 import { loadSignatures, addSignature } from './js/signature.js'
 import { VERSION } from './js/version.js'
@@ -391,6 +391,7 @@ let specialElements = []
 
 //模块级状态：当前打开的微调面板 taskPane 和健康检查计时器
 let currentTaskPane = null
+let currentTaskPaneId = null  //上次创建的 taskPane.ID，用于跨调用反查旧面板是否仍存活
 let currentHealthTimer = null  //仅检测文档切换/关闭
 let currentFormatDocName = ''  //面板关联的文档 FullName，用于检测文档切换
 let currentFormatDocCaption = ''  //面板关联的窗口 Caption，用于检测标签切换
@@ -413,6 +414,7 @@ function closeFormatPanel() {
     try { currentTaskPane.Delete() } catch (e) { }
     currentTaskPane = null
   }
+  currentTaskPaneId = null
 }
 
 //处理面板消息（BroadcastChannel 即时接收，替代 500ms 轮询）
@@ -577,7 +579,9 @@ function insertSignatureText(doc, text) {
     undoRecord.StartCustomRecord('插入落款')
   } catch (e) { }
   try {
+    // 移到文末再插入，不插入到光标处
     const sel = window.Application.ActiveWindow.Selection
+    sel.EndKey(6)  // 6 = wdStory，移到文档末尾
     const lines = String(text).replace(/\r+$/, '').split(/\r?\n/)
     //多行落款：每行独立成段，按落款格式（右对齐、仿宋）写入
     const bodyFont = getAvailableFont(getSettings().bodyFont, '仿宋')
@@ -595,6 +599,20 @@ function insertSignatureText(doc, text) {
         }
       } catch (e) { }
     }
+    //自动追加当天日期
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+    const day = now.getDate()
+    const dateStr = year + '年' + month + '月' + day + '日'
+    try {
+      sel.TypeParagraph()
+      sel.TypeText(dateStr)
+      try { sel.ParagraphFormat.Alignment = 2 } catch (e) { }
+      try { sel.Font.Name = bodyFont } catch (e) { }
+      try { sel.Font.NameAscii = 'Times New Roman' } catch (e) { }
+      try { sel.Font.NameOther = 'Times New Roman' } catch (e) { }
+    } catch (e) { }
   } catch (e) { }
   if (undoRecord) {
     try { undoRecord.EndCustomRecord() } catch (e2) { }
@@ -686,7 +704,19 @@ function addSpecialElement(doc, start, length, type) {
   try {
     const settings = getSettings()
     applyBodyFormat(doc, settings, getAvailableFont)
-    applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+    const posUpdates = applySpecialFormat(doc, settings, specialElements, getAvailableFont)
+    //落款/日期对齐写回后会插入前导空格，落款元素的 start/length 会漂移；
+    //必须同步更新 specialElements，否则下次标记用过时指针取 rng，
+    //applyFooterAlignment 里 rng.Text = spaces + cleanText 会框错段、删大片用户文字。
+    if (Array.isArray(posUpdates) && posUpdates.length > 0) {
+      for (const upd of posUpdates) {
+        const el = specialElements.find(e => e.start === upd.oldStart)
+        if (el) {
+          el.start = upd.newStart
+          el.length = upd.newLength
+        }
+      }
+    }
     boldEnumerations(doc)
   } catch (e) { }
   if (undoRecord) {
@@ -748,7 +778,6 @@ function autoFormatDocument() {
     specialElements = detectElements(doc, settings)
     applyBodyFormat(doc, settings, getAvailableFont)
     const posUpdates = applySpecialFormat(doc, settings, specialElements, getAvailableFont)
-    boldEnumerations(doc)
 
     //落款/日期对齐后同步位置
     if (Array.isArray(posUpdates) && posUpdates.length > 0) {
@@ -760,6 +789,21 @@ function autoFormatDocument() {
         }
       }
     }
+
+    //标题（title）与下方第一行正文/抬头之间确保空一行（GB/T 9704）
+    //在 applySpecialFormat 之后、boldEnumerations 之前：title 已格式化完毕，
+    //补一个 \r 只影响 title 之后位置，body 全文统一刷不依赖指针。
+    try {
+      ensureBlankLineAfterTitle(specialElements)
+    } catch (e) { }
+
+    //落款区与上方最后一行正文之间确保至少两个空行（GB/T 9704）
+    //不足两个补齐，已两个或更多不动；补齐若导致落款挤到下一页则回滚不补。
+    try {
+      ensureBlankLinesBeforeFooter(specialElements)
+    } catch (e) { }
+
+    boldEnumerations(doc)
 
     //落款/发言人缺失：传给面板显示提示条（不再用 alert 打断）
     //disableFooterWarning 永久关闭（设置对话框或面板"不再提示"）
@@ -798,7 +842,8 @@ function autoFormatDocument() {
 //将连续的 sig/authorInfo/date 元素合并为一个落款文本，去重后存入
 function autoRememberSignatures(doc, elements) {
   if (!doc || !Array.isArray(elements)) return
-  const footerTypes = new Set(['sig', 'authorInfo', 'date'])
+  // 记忆只存署名+发言人，不含日期（插入时用当天日期）
+  const footerTypes = new Set(['sig', 'authorInfo'])
   const footerEls = elements.filter(el => footerTypes.has(el.type))
   if (footerEls.length === 0) return
 
@@ -846,10 +891,24 @@ function openFormatPanel(doc) {
     try { currentFormatDocCaption = window.Application.ActiveWindow.Caption } catch (e) { currentFormatDocCaption = '' }
 
     //销毁旧面板（防止重复创建）
+    //1) 先关 JS 变量持有的旧面板（快速路径）
     if (currentTaskPane) {
       try { currentTaskPane.Visible = false } catch (e) { }
       try { currentTaskPane.Delete() } catch (e) { }
       currentTaskPane = null
+    }
+    //2) 兜底：用 GetTaskpane 反查上次创建的 taskPane 是否仍存活
+    //   场景：用户手动关闭面板、或文档切换时变量未同步，currentTaskPane 为 null 但 WPS 里面板还在。
+    //   不反查就会创建第二个面板。
+    if (currentTaskPaneId != null) {
+      try {
+        const oldPane = window.Application.GetTaskpane(currentTaskPaneId)
+        if (oldPane) {
+          try { oldPane.Visible = false } catch (e2) { }
+          try { oldPane.Delete() } catch (e2) { }
+        }
+      } catch (e) { }
+      currentTaskPaneId = null
     }
     if (currentHealthTimer) {
       clearInterval(currentHealthTimer)
@@ -902,6 +961,8 @@ function openFormatPanel(doc) {
     console.log('[openFormatPanel] taskPane =', taskPane)
     if (taskPane) {
       currentTaskPane = taskPane
+      //保存 taskPane.ID，下次 openFormatPanel 用 GetTaskpane(id) 反查旧面板是否仍存活
+      try { currentTaskPaneId = taskPane.ID } catch (e) { currentTaskPaneId = null }
       //左侧停靠模式（DockPosition=0 = msoCTPDockPositionLeft）
       taskPane.DockPosition = 0
       taskPane.Visible = true
@@ -959,6 +1020,21 @@ function mergePanelEdits(oldList, newList) {
     if (doc && oldLen > 0) {
       try { matchedLen = matchDocPrefix(doc, start, text) } catch (e) { matchedLen = 0 }
     }
+    //兜底：matchedLen 异常（0 或小于 text 长度）时，改类型场景没改文字，
+    //直接用面板 text 长度作为 length，确保记忆写入正确 length，下次排版预认领成功。
+    //修"改类型后下次一键排版变回正文无缩进"bug：matchDocPrefix 受 doc 前导空格/段尾影响返回偏小值，
+    //导致记忆 length 不足，预认领 common >= memLen 失败 → 走正则 → 正则不认 → body。
+    if (matchedLen < text.length && text.length > 0) {
+      //仅当 text 与 doc start 处文本确实一致（首字相同）才用 text 长度兜底，避免改文字场景误判
+      let docFirstCh = ''
+      try {
+        const rng = doc.Range(start, start + 1)
+        docFirstCh = rng.Text.replace(/[\r\n]+$/, '').replace(/^\s+/, '').charAt(0)
+      } catch (e) { }
+      if (docFirstCh && text.charAt(0) === docFirstCh) {
+        matchedLen = text.length
+      }
+    }
 
     //决定新元素的 length 和 matched
     let newLen, matched
@@ -992,14 +1068,19 @@ function mergePanelEdits(oldList, newList) {
 
 //面板编辑微调：从 doc 的 start 位置开始，逐字和 panelText 比对，
 //返回最长匹配前缀的字符数。字符不一致即中止。
+//注意：doc 文本和 panelText 都需 trim 前导空白后再比对——
+//否则 doc 段含前导空格（落款对齐加的/正文缩进）而 panelText 已 trim，
+//第一个字符就对不上，matchedLen 误算为 0，
+//导致记忆写入 length 与文本不对应，下次排版预认领失败 → 元素变回正文。
 function matchDocPrefix(doc, start, panelText) {
   try {
     // 取 doc 中从 start 开始足够长的文本用于比对
     const rng = doc.Range(start, start + panelText.length + 50)
-    const docText = rng.Text.replace(/[\r\n]+$/, '')
+    const docText = rng.Text.replace(/[\r\n]+$/, '').replace(/^\s+/, '')
+    const cmpPanel = panelText.replace(/^\s+/, '')
     let matched = 0
-    for (let i = 0; i < panelText.length && i < docText.length; i++) {
-      if (panelText.charAt(i) === docText.charAt(i)) {
+    for (let i = 0; i < cmpPanel.length && i < docText.length; i++) {
+      if (cmpPanel.charAt(i) === docText.charAt(i)) {
         matched++
       } else {
         break  // 字符不一致，中止

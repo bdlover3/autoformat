@@ -213,7 +213,7 @@ const RULES = [
     type: 'addressee',
     label: '抬头',
     priority: 8,
-    detect: { mode: 'pattern', pattern: 'addresseeEndPattern', maxLength: 30 },
+    detect: { mode: 'pattern', pattern: 'addresseeEndPattern', maxLength: 30, negateTransition: true },
     formatSpec: {
       fontKey: 'bodyFontName',
       fontSizeKey: 'bodyFontSize',

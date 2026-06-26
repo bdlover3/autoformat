@@ -14,7 +14,7 @@
 //==============================================================
 
 import { RULES } from './rules.js'
-import { measureWidth, h1Pattern, h2Pattern, h3Pattern } from './patterns.js'
+import { measureWidth } from './patterns.js'
 import { matchDetect } from './detect.js'
 
 //--- 对齐方式常量 ---
@@ -254,7 +254,10 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
     let paraEnd = 0
     try {
       const rng = doc.Range(el.start, el.start + el.length)
-      raw = rng.Text.replace(/[\r\n]+$/, '').replace(/\s+$/, '')
+      // trim 时必须显式去掉全角空格 U+3000——JS 的 \s 默认不匹配全角空格，
+      // 上次排版塞的前导全角空格会残留在 raw 里，measureWidth 把它算进宽度，
+      // 导致 padW 偏小甚至 0，落款右侧没有 rightBlank 的空隙。
+      raw = rng.Text.replace(/[\r\n]+$/, '').replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '')
       // 获取段落对象以设置格式属性
       const para = rng.Paragraphs.Item(1)
       paraStart = para.Range.Start
@@ -263,9 +266,11 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
       continue
     }
 
-    //优先使用面板编辑后的 text
-    const editedText = (el.text == null) ? raw : String(el.text).replace(/[\r\n]+$/, '').replace(/\s+$/, '')
-    lines.push({ type: el.type, start: el.start, length: el.length, paraStart, paraEnd, text: editedText })
+    //落款对齐写回的文本必须用 doc 实时文本，不能用 el.text 旧快照——
+    //否则用户在 doc 里编辑（删空格等）后，用旧快照覆盖会把用户编辑的内容冲掉删没。
+    //el.text 是面板编辑快照，仅供面板显示用；格式化以 doc 当前内容为准。
+    const cleanText = raw
+    lines.push({ type: el.type, start: el.start, length: el.length, paraStart, paraEnd, text: cleanText })
   }
   lines.sort((a, b) => a.start - b.start)
 
@@ -283,37 +288,38 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
     line.width = measureWidth(line.text)
   }
 
-  // GB/T 9704-2012 不加盖印章公文排版规则：
+  // GB/T 9704-2012 不加盖印章公文排版规则（7.3.5.2）：
   //   默认：发文机关署名右空二字；成文日期在署名下一行，首字比署名首字右移二字。
   //   日期长于署名时：成文日期右空二字编排，并相应增加发文机关署名右空字数
   //   （署名首字追齐日期首字，使日期右空二字固定）。
   //
-  // 署名允许 1 行或 2 行（detect.js processFooter 最多收集 2 行 sig）：
-  //   多行署名视为一个整体，所有 sig 行共用同一 rightBlank，各行右端对齐，
-  //   署名整体右端距行尾 rightBlank 字。署名宽度 sigW 取各行宽度的最大值
-  //   （最宽行决定署名整体的右端，也是日期首字右移2字的参照）。
+  // 关键不变量：署名右端和日期右端都对齐到"版心右边缘 - 2 字"（两者右端对齐），
+  // 日期首字比署名首字右移 2 字是通过"署名整体左移 2 字"实现（署名 rightBlank 加 2），
+  // 不是通过"日期减少 rightBlank"实现——否则日期右端会超出署名右端，对不上。
   //
-  // 设 sigW=署名整体宽（各行最宽），dateW=日期宽，s=署名右空字数，d=日期右空字数：
-  //   dateW <= sigW：s=2，d = sigW - dateW        （日期首字比署名首字右移2字）
-  //   dateW >  sigW：d=2，s = 2 + (dateW - sigW)   （署名首字追齐日期首字，日期右空2字）
-  // 每行前导宽度 = 行宽 - 文本宽 - 右空字数（保证右端距行尾 rightBlank 字）
-  const sigRightBlank = 2   // 默认署名右空二字
-  const dateRightBlank = 2  // 日期右空二字基准
+  // 署名允许 1 行或 2 行（detect.js processFooter 最多收集 2 行 sig）：
+  //   多行署名视为一个整体，所有 sig 行共用同一 rightBlank，各行右端对齐。
+  //   署名整体宽度 sigW 取各行宽度的最大值（最宽行决定署名整体的右端）。
+  //
+  // 设 sigW=署名整体宽（各行最宽），dateW=日期宽：
+  //   dateW <= sigW：署名 rightBlank = 2 + 2 = 4（署名左移让日期首字右移2字），日期 rightBlank = 2
+  //   dateW >  sigW：日期 rightBlank = 2，署名 rightBlank = 2 + (dateW - sigW) + 2
+  //                 （署名追齐日期首字再多空2字，让日期首字仍比署名首字右移2字）
+  // 简化：两者右端都对齐到版心右边缘减 2 字；署名整体比日期左移 2 字（署名 rightBlank = 日期 rightBlank + 2）。
   const sigLines = lines.filter(l => l.type === 'sig')
   const dateLine = lines.find(l => l.type === 'date')
-  // 署名整体宽度 = 各 sig 行最宽者（无 sig 行则 0）
   const sigW = sigLines.reduce((m, l) => (l.width > m ? l.width : m), 0)
   const dateW = dateLine ? dateLine.width : 0
   const bothPresent = sigLines.length > 0 && dateLine
   const dateLonger = bothPresent && dateW > sigW
 
-  // 计算署名整体的右空字数（所有 sig 行共用）与日期的右空字数
+  // 日期右端距版心右边缘 2 字（固定）
+  const dateRightBlankFinal = 2
+  // 署名右端距版心右边缘 = 2 + 2 = 4 字（署名整体左移 2 字，让日期首字比署名首字右移 2 字）
+  // 日期长于署名时，署名还要追齐日期首字：署名 rightBlank = 4 + (dateW - sigW)
   const sigRightBlankFinal = bothPresent
-    ? (dateLonger ? dateRightBlank + (dateW - sigW) : sigRightBlank)
-    : sigRightBlank
-  const dateRightBlankFinal = bothPresent
-    ? (dateLonger ? dateRightBlank : (sigW - dateW))
-    : dateRightBlank
+    ? (dateLonger ? 4 + (dateW - sigW) : 4)
+    : 2
 
   // 计算每行的右空字数
   for (const line of lines) {
@@ -323,33 +329,81 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
       line.rightBlank = Math.max(0, dateRightBlankFinal)
     } else {
       // 非 sig/date 的辅助行：右空二字兜底
-      line.rightBlank = sigRightBlank
+      line.rightBlank = 2
     }
   }
 
-  //用半角空格实现前导缩进（半角空格宽度约0.5半字符单位）
-  //padW 是半字符单位宽度，半角空格数 = padW / 0.5 = padW * 2
+  //用全角空格实现前导缩进——关键：用全角空格（U+3000），不用半角空格。
+  //全角空格宽度 = 1 全角字，与 charWidth 的全角=1 完全一致，精度准确，对得齐。
+  //用户可见空格、可手动增删调整，符合公文用户的操作习惯。
+  //padW 是全角字单位宽度，全角空格数 = padW（1 全角空格 = 1 全角字宽）
   //逆序处理：从文档末尾往前写，避免前导空格插入导致后续行字符位置偏移
   const posUpdates = []
+  const docEnd = (function () { try { return doc.Content.End } catch (e) { return 0 } })()
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
     // 前导宽度 = 行宽 - 文本宽度 - 右空字数（保证右端距行尾 rightBlank 字）
-    const padW = Math.max(0, lineCharCount - line.width - line.rightBlank)
-    const halfSpaces = Math.round(padW * 2)  // 半角空格数
+    // 安全余量 -1：measureWidth 对半角数字/字母按 0.5 全角字估算，但仿宋里混排 Times New Roman
+    // 半角数字实际宽度略大于 0.5，累积偏差会让 padW 偏大，顶满版心时把末字挤到第二行。
+    // 用 Math.floor 且预留 1 字余量，宁可右空多 1 字也不挤换行。
+    const padW = Math.max(0, lineCharCount - line.width - line.rightBlank - 1)
+    const fullSpaces = Math.floor(padW)  // 全角空格数（向下取整，保守不挤换行）
     let spaces = ''
-    for (let j = 0; j < halfSpaces; j++) spaces += ' '  // 半角空格
+    for (let j = 0; j < fullSpaces; j++) spaces += '\u3000'  // 全角空格 U+3000
     try {
-      const rng = doc.Range(line.paraStart, line.paraEnd - 1)
-      rng.ParagraphFormat.Alignment = 0  // 左对齐（空格控制缩进）
-      rng.ParagraphFormat.LeftIndent = 0
-      rng.ParagraphFormat.RightIndent = 0
-      rng.ParagraphFormat.FirstLineIndent = 0
-      rng.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-      const cleanText = line.text
-      rng.Text = spaces + cleanText
-      // 写回后位置可能变化，返回更新
-      const newPara = rng.Paragraphs.Item(1)
-      posUpdates.push({ oldStart: line.start, newStart: newPara.Range.Start, newLength: newPara.Range.End - newPara.Range.Start })
+      //防御性校验：el.start/el.length 合理，越界跳过
+      if (typeof line.start !== 'number' || typeof line.length !== 'number') continue
+      if (line.length <= 0) continue
+      if (docEnd > 0 && line.start + line.length > docEnd) continue
+
+      //关键防删字：只动"段首到原文本起点"之间的前导空格，绝不碰原文本区间
+      //[line.start, line.start+line.length] 是原文本（detect 时 trim 后的位置），
+      //不管用户删换行导致段落怎么合并，这个区间内的文字保持不变。
+      //[line.paraStart, line.start) 是段首到原文本前的前导区（含上次塞的旧空格），
+      //把旧前导删掉，换成新全角空格。
+      const textStart = line.start
+
+      //1) 删旧前导空格 [paraStart, textStart)——只删空格和全角空格，遇非空格即停（保住段首若有缩进外的内容）
+      let leadEnd = textStart
+      while (leadEnd > line.paraStart) {
+        const ch = doc.Range(leadEnd - 1, leadEnd).Text
+        if (ch === ' ' || ch === '\u3000' || ch === '\t') {
+          leadEnd--
+        } else {
+          break
+        }
+      }
+      if (leadEnd < textStart) {
+        doc.Range(leadEnd, textStart).Delete()  // 删旧前导空格
+        // 删除后原文本位置 = leadEnd，长度不变，在 leadEnd 处插新空格
+        const insertPos = leadEnd
+        //2) 插新全角空格
+        if (spaces) {
+          doc.Range(insertPos, insertPos).InsertBefore(spaces)
+        }
+        //3) 设段落格式（用插完空格后的段落）
+        const newPara = doc.Range(insertPos, insertPos + spaces.length + line.length).Paragraphs.Item(1)
+        const pRange = newPara.Range
+        pRange.ParagraphFormat.Alignment = 0  // 左对齐（空格控制缩进）
+        pRange.ParagraphFormat.LeftIndent = 0
+        pRange.ParagraphFormat.RightIndent = 0
+        pRange.ParagraphFormat.FirstLineIndent = 0
+        pRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+        posUpdates.push({ oldStart: line.start, newStart: insertPos + spaces.length, newLength: line.length })
+      } else {
+        //无旧前导空格（leadEnd === textStart），直接在 textStart 前插空格
+        if (spaces) {
+          doc.Range(textStart, textStart).InsertBefore(spaces)
+        }
+        const newPara = doc.Range(textStart, textStart + spaces.length + line.length).Paragraphs.Item(1)
+        const pRange = newPara.Range
+        pRange.ParagraphFormat.Alignment = 0
+        pRange.ParagraphFormat.LeftIndent = 0
+        pRange.ParagraphFormat.RightIndent = 0
+        pRange.ParagraphFormat.FirstLineIndent = 0
+        pRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+        posUpdates.push({ oldStart: line.start, newStart: textStart + spaces.length, newLength: line.length })
+      }
     } catch (e) { }
   }
   return posUpdates
@@ -375,23 +429,49 @@ export function boldEnumerations(doc) {
 }
 
 /**
- * 计算版心可容纳的字符数
+ * 计算版心可容纳的全角字符数（用于落款空格对齐的行宽基准）。
+ *
+ * 不用纯几何理论值（版心宽/字号）——WPS 里仿宋字实际字宽含字间距，
+ * 比字号略大，理论算 28 字实际只能放 27 字。用实测校准值：
+ *   三号 16 磅 → 每行 27 字（实测）
+ *   17 磅      → 每行 26 字（实测）
+ * 规律：字号每 +1 磅，每行字数 -1。按此线性插值。
+ *
+ * PageSetup 取得到时用版心宽校验（防用户改边距），否则用字号映射。
  */
 export function calcLineCharCount(doc, settings) {
+  //字号 → 每行字数映射（实测校准）：16磅=27字，字号每+1磅字数-1
+  const fontSize = settings && typeof settings.bodyFontSize === 'number' ? settings.bodyFontSize : 16
+  let charsBySize = 27 - (fontSize - 16)
+  if (charsBySize < 1) charsBySize = 27
+
   try {
     const ps = doc.PageSetup
     const contentWidthPt = ps.PageWidth - ps.LeftMargin - ps.RightMargin
-    const charPt = settings.bodyFontSize
-    const n = Math.floor(contentWidthPt / charPt)
-    if (n > 0) return n
+    //用版心宽校验：若用户改了边距导致版心宽变化，按比例调整字数
+    //标准版心宽 = 156mm = 442.26 磅（210-28-26mm）
+    const standardWidthPt = 156 * 2.835
+    if (contentWidthPt > 0 && Math.abs(contentWidthPt - standardWidthPt) > 5) {
+      //版心宽偏离标准 5 磅以上，按比例调整
+      charsBySize = Math.round(charsBySize * contentWidthPt / standardWidthPt)
+    }
+    if (charsBySize > 0) return charsBySize
   } catch (e) { }
-  return 28
+  return charsBySize
 }
 
 /**
- * "一是"整句加粗：一、二、三、(一)(二)(三)1.2.3.等标题不止本身加粗，
- * 标题后第一个句号/问号/叹号前的正文也加粗。
- * 按钮明确功能 = 加粗格式，不改文字内容，合规。
+ * "X是"整句加粗：遍历全文，把每个"一是/二是/.../十二是"开头的整句加粗，
+ * 范围从"X是"起，到第一个结束符号（。！？）含符号为止。
+ *
+ * 只加粗"X是"句本身，不影响前面的标题或正文（修"把前面内容都加粗"bug）。
+ * 不改文字内容，只设 Font.Bold，合规。
+ *
+ * 实现思路（与 AGENTS.md "BaseTxt 与 doc.Range 一一对应"思路一致）：
+ *   1. 拼全文 baseTxt，与 doc.Range 字符位置一一对应
+ *   2. 正则全文扫描所有"X是"位置（不跨段，避免误吞）
+ *   3. 从每个"X是"位置向后找第一个结束符号，框定加粗区间
+ *   4. 用 doc.Range(start, end) 精准加粗，不扩段
  */
 export function boldTitleWithTail(doc) {
   if (!doc) return
@@ -399,45 +479,46 @@ export function boldTitleWithTail(doc) {
   const text = fullRange.Text
   if (!text) return
 
-  //标题起始模式：一、(一)1. 等
-  const titlePatterns = [h1Pattern, h2Pattern, h3Pattern]
+  // "一是/二是/.../十二是" —— 段首或开头才认（避免把句中"一是"误吞）
+  // 数字范围 一..十二，限制最多十二是（再多不常见，按用户要求）
+  // 模式：(^|\r|。！？；：)\s{0,4}([一二三四五六七八九十]+)是
+  // 用 exec 全文扫描，match.index 指向"X是"的"X"位置
+  const xsPattern = /(?:^|[\r。！？；：])\s{0,4}([一二三四五六七八九十]{1,3})是/g
   const endSymbol = /[。！？]/
 
   let undoRecord = null
   try {
     undoRecord = window.Application.UndoRecord
-    undoRecord.StartCustomRecord('"一是"整句加粗')
+    undoRecord.StartCustomRecord('"X是"整句加粗')
   } catch (e) { }
 
   try {
-    //逐段扫，找到标题段后，从标题开始加粗到第一个结束符号（含符号）
-    const paragraphs = doc.Paragraphs
-    const count = paragraphs.Count
-    for (let i = 1; i <= count; i++) {
-      let para = null
-      try { para = paragraphs.Item(i) } catch (e) { continue }
-      if (!para) continue
-      const paraText = para.Range.Text.replace(/[\r\n]+$/, '')
-      if (!paraText) continue
-      //是否标题开头
-      let isTitle = false
-      for (const pat of titlePatterns) {
-        if (pat && pat.test(paraText)) { isTitle = true; break }
+    let match = null
+    while ((match = xsPattern.exec(text)) !== null) {
+      // 数字部分要限制在 一..十二 范围内
+      const numStr = match[1]
+      if (!isValidXsNumber(numStr)) {
+        // 继续往后找（防止陷入死循环：exec lastIndex 已前进）
+        continue
       }
-      if (!isTitle) continue
-
-      //从标题段起点开始，找第一个结束符号（跨段也找，但限制最多扫 500 字避免越界）
-      const paraStart = para.Range.Start
-      const scanText = text.substring(paraStart - fullRange.Start, paraStart - fullRange.Start + 500)
+      // "X是"在 match 中的起始偏移：match[0] 包含前导符号/空白，需定位到数字位置
+      // match[0] 形如 "。\n一是" / "一是" / "\r二是"，数字偏移 = match[0].length - numStr.length - 1（"是"占1）
+      const xsStartOffset = match.index + (match[0].length - numStr.length - 1)
+      // 映射到 doc.Range 坐标
+      const xsStart = fullRange.Start + xsStartOffset
+      // 向后找第一个结束符号（最多扫 500 字避免越界）
+      const scanText = text.substring(xsStartOffset, xsStartOffset + 500)
       let endIdx = -1
       for (let j = 0; j < scanText.length; j++) {
-        if (endSymbol.test(scanText.charAt(j))) { endIdx = j; break }
+        const ch = scanText.charAt(j)
+        if (ch === '\r') break  // 换段了还没遇到结束符号，不再加粗（避免吞下一段）
+        if (endSymbol.test(ch)) { endIdx = j; break }
       }
       if (endIdx < 0) continue  //无结束符号，跳过
 
-      //加粗 [paraStart, paraStart + endIdx + 1]（含结束符号）
+      //加粗 [xsStart, xsStart + endIdx + 1]（含结束符号）
       try {
-        const rng = doc.Range(paraStart, paraStart + endIdx + 1)
+        const rng = doc.Range(xsStart, xsStart + endIdx + 1)
         rng.Font.Bold = true
       } catch (e) { }
     }
@@ -448,4 +529,14 @@ export function boldTitleWithTail(doc) {
       try { undoRecord.EndCustomRecord() } catch (e2) { }
     }
   }
+}
+
+/** 校验"X是"中的数字是否在 一..十二 范围内 */
+function isValidXsNumber(numStr) {
+  // 一..十 直接对应
+  const simple = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+  if (simple.includes(numStr)) return true
+  // 十一、十二
+  if (numStr === '十一' || numStr === '十二') return true
+  return false
 }

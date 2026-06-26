@@ -179,14 +179,14 @@ src/components/
 
 | 组 | 按钮 | 说明 |
 |----|------|------|
-| 一键排版 | `btnAutoFormat` 一键排版、`btnUndoFormat` 一键恢复、(标记元素/插入落款)、(标题后换行/删除全部空行)(删除标题末符号/"一是"整句加粗)、`btnDetectSignature` 记忆格式管理 | 核心排版与微调 |
+| 一键排版 | `btnAutoFormat` 一键排版、`btnUndoFormat` 一键恢复、(标记元素/插入落款)、(标题后换行/删除全部空行)(删除标题末符号/"X是"整句加粗)、`btnDetectSignature` 记忆格式管理 | 核心排版与微调 |
 | 功能 | `btnFormatSettings` 固定格式设置、`btnCheckUpdate` 检查更新、`btnAbout` 关于 | 设置与杂项 |
 
 - `btnInsertSignature` 打开落款库对话框（`InsertSignature.vue`，路由 `/insertsig`）：0 个落款提示、1 个直接插入光标处、多个弹窗选择。落款库存储在 `AppDataPath\WPSAutoFormat\signatures.json`，管理见 `js/signature.js`。
 - `btnMarkElement` 打开标记对话框（`MarkElement.vue`，路由 `/markelement`）：取当前选区，用户选类型后走 `addSpecialElement` 统一添加流程（含写入记忆）。
 - `btnDetectSignature` 打开记忆管理面板（`MemoryPanel.vue`，路由 `/memory`），可查看/删除/清空类型记忆。
-- `btnRemoveTitleEndSymbol` 删除标题末尾结束符号（遍历全文标题，删末尾。！？；等），见 `docops.js` `removeTitleEndSymbols`。
-- `btnBoldTitleWithTail` "一是"整句加粗：标题+后文第一句加粗，见 `format.js` `boldTitleWithTail`。
+- `btnRemoveTitleEndSymbol` 删除标题末尾结束符号（直接扫描全文段落，对每个像 h1/h2/h3/h4/附件 的段落末尾。！？；等符号删除），见 `docops.js` `removeTitleEndSymbols`。
+- `btnBoldTitleWithTail` "X是"整句加粗：把每个"一是/二是/.../十二是"开头的整句加粗（从"X是"到下一个结束符号含符号），见 `format.js` `boldTitleWithTail`。
 
 ## 添加/删除特殊元素统一流程
 
@@ -232,6 +232,6 @@ src/components/
 - **允许**：用 `LeftIndent`/`RightIndent`/`Alignment` 等段落格式属性实现缩进/对齐 ✅
 - **允许**：`clearAllFormatting` 中 `ConvertNumbersToText()` 保留自动编号为文字 ✅
 - **允许**：`setupPageNumber` 清空/重建页脚页码 ✅
-- **允许**：`applyFooterAlignment` 中用前导空格调整落款/日期对齐（`rng.Text = spaces + cleanText` ✅）——`LeftIndent` 无法表达半字符偏移，空格对齐是唯一可靠方式
+- **允许**：`applyFooterAlignment` 中用**全角空格**（U+3000）调整落款/日期对齐（`rng.Text = spaces + cleanText` ✅）——用户公文操作习惯就是用空格调落款，必须保留空格可见可增删；用全角空格（宽度=1 全角字，与 `charWidth` 全角=1 一致）而非半角空格（仿宋半角空格实际宽度≈0.4 全角字，对不齐），精度准确符合 GB/T 9704-2012
 - **唯一例外**：`removeBlankLines()` 可以删除空段落（这是该按钮的明确功能）
 - 违反此规定的代码必须立即修复

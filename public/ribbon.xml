@@ -16,7 +16,7 @@
                     <separator id="sepBox"/>
                     <box id="boxTitleEnd" boxStyle="vertical" visible="true">
                         <button id="btnRemoveTitleEndSymbol" label="删除标题末符号" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
-                        <button id="btnBoldTitleWithTail" label="&quot;一是&quot;整句加粗" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
+                        <button id="btnBoldTitleWithTail" label="&quot;X是&quot;整句加粗" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                     </box>
                     <separator id="sep2"/>
                     <button id="btnDetectSignature" label="记忆格式管理" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>

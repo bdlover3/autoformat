@@ -114,9 +114,17 @@ export function recordTypeChanges(oldElements, newElements, doc) {
         }
         posIndex[posKey] = t
       }
+      // 防御：删除 memory 里所有与该 text 相同的旧条目（不论位置），
+      // 避免改类型前后 text 略有差异（前导空格/trim）时新旧两条并存，
+      // 预认领遍历顺序不确定导致认领到旧 type（如 body/h1）而非用户改的新 type。
+      if (t in memory) delete memory[t]
       // 记忆格式：{ text: { type, length } } —— 记录类型 + 匹配长度
-      // length 用于下次排版时逐字比对，超过此长度部分不认领
-      memory[t] = { type: el.type, length: typeof el.length === 'number' ? el.length : t.length }
+      // length 用于下次排版时逐字比对，超过此长度部分不认领。
+      // length 不应超过文本长度（否则预认领 common 永远 < memLen，认领失败 → 元素变回正文）。
+      // 走"matchedLen=0 保留原 length"分支时 oldLen 可能含前导空格/段尾，超过 trim 文本长度，需截断。
+      const rawLen = typeof el.length === 'number' ? el.length : t.length
+      const memLen = Math.min(rawLen, t.length)
+      memory[t] = { type: el.type, length: memLen }
       changed = true
     }
   }

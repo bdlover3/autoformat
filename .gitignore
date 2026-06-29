@@ -1,6 +1,11 @@
-node_modules/ 
-dist/ 
-wps-addon-build/ 
-.DS_Store 
-*.local 
+﻿node_modules/
+dist/
+wps-addon-build/
+.DS_Store
+*.local
 .atomcode/
+.codebuddy/
+*.7z
+vercel-publish/
+.vercel/
+release/

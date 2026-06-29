@@ -3,7 +3,7 @@ import SystemDemo from './js/systemdemo.js'
 
 //模块导入
 import { detectElements, getSegmentText } from './js/detect.js'
-import { applyBodyFormat, applySpecialFormat, boldEnumerations, boldTitleWithTail } from './js/format.js'
+import { applyBodyFormat, applySpecialFormat, applyFooterAlignment, boldEnumerations, boldTitleWithTail } from './js/format.js'
 import { clearAllFormatting, setupPage } from './js/page.js'
 import { removeBlankLines, splitTitleParagraph, removeTitleEndSymbols, ensureBlankLineAfterTitle, ensureBlankLinesBeforeFooter } from './js/docops.js'
 import { loadTypeMemory, recordTypeChanges, deleteTypeMemory } from './js/typememory.js'
@@ -37,6 +37,9 @@ const DEFAULT_SETTINGS = {
   clearFormatting: true,    // 是否先清除所有格式
   disableFontWarning: false, // 是否永久屏蔽缺失字体提示
   disableFooterWarning: false, // 是否永久屏蔽落款缺失提示
+  enableFooterLayout: true, // 是否启用落款排版
+  footerLayoutMode: 'pretty', // 落款排版方式：official 公文 / pretty 美观
+  footerLayoutDefaultVersion: 1, // 落款排版默认值迁移版本
   fontReplacements: {},        // 缺失字体替代品映射
   autoSplitSubtitle: false     // 一二三级标题后自动换行
 }
@@ -110,6 +113,11 @@ function getSettings() {
         result[key] = saved[key]
       }
     })
+    if (saved.footerLayoutDefaultVersion !== 1) {
+      result.enableFooterLayout = true
+      result.footerLayoutMode = 'pretty'
+      result.footerLayoutDefaultVersion = 1
+    }
   }
 
   return result
@@ -310,7 +318,7 @@ function applyFontWarningResult(result) {
   }
 }
 
-function OnAction(control) {
+function OnAction(control, selectedId) {
   const eleId = control.Id
   switch (eleId) {
     case 'btnAutoFormat': {
@@ -320,11 +328,12 @@ function OnAction(control) {
     case 'btnDetectSignature': {
       // 记忆管理按钮
       try {
-        const memory = loadTypeMemory()
+        const memory = loadTypeMemory(window.Application.ActiveDocument)
         window.__memoryData = memory
+        window.__memoryDoc = window.Application.ActiveDocument
         window.Application.ShowDialog(
           Util.GetUrlPath() + Util.GetRouterHash() + '/memory',
-          '记忆管理',
+          '元素管理',
           420 * window.devicePixelRatio,
           500 * window.devicePixelRatio,
           true
@@ -338,6 +347,22 @@ function OnAction(control) {
     }
     case 'btnInsertSignature': {
       insertSignature()
+      break
+    }
+    case 'chkFooterLayout': {
+      const settings = getSettings()
+      settings.enableFooterLayout = !!control.Pressed
+      saveSettings(settings)
+      try { window.Application.ribbonUI.Invalidate() } catch (e) { }
+      break
+    }
+    case 'ddlFooterLayout': {
+      const settings = getSettings()
+      const itemId = selectedId || (control.SelectedItem && control.SelectedItem.Id)
+      settings.footerLayoutMode = itemId === 'footerLayoutOfficial' ? 'official' : 'pretty'
+      settings.enableFooterLayout = true
+      saveSettings(settings)
+      try { window.Application.ribbonUI.Invalidate() } catch (e) { }
       break
     }
     case 'btnMarkElement': {
@@ -530,23 +555,13 @@ function handlePanelMessage(msg) {
   }
 }
 
-//插入落款：检查落款库，0 个提示、1 个直接插入、多个弹窗选择
+//插入落款：始终打开落款面板，面板内可选择/新增落款并控制是否自动插入日期
 function insertSignature() {
   const doc = window.Application.ActiveDocument
   if (!doc) {
     alert('请先打开文档')
     return
   }
-  const signatures = loadSignatures()
-  if (signatures.length === 0) {
-    alert('暂无保存的落款。\n\n可点击"插入落款"按钮在弹窗中添加常用落款，或排版后用微调面板的落款识别。')
-    return
-  }
-  if (signatures.length === 1) {
-    insertSignatureText(doc, signatures[0].text)
-    return
-  }
-  //多个落款：弹窗选择，BroadcastChannel 接收选择结果
   try {
     const bc = new BroadcastChannel('wps_insert_signature')
     const timeoutId = setTimeout(() => { try { bc.close() } catch (e) { } }, 60000)
@@ -555,7 +570,7 @@ function insertSignature() {
       if (!msg || !msg.type) return
       if (msg.type === 'insert' && msg.text) {
         clearTimeout(timeoutId)
-        insertSignatureText(doc, msg.text)
+        insertSignatureText(doc, msg.text, msg.autoDate !== false)
         try { bc.close() } catch (e) { }
       }
     }
@@ -563,15 +578,34 @@ function insertSignature() {
       Util.GetUrlPath() + Util.GetRouterHash() + '/insertsig',
       '插入落款',
       460 * window.devicePixelRatio,
-      520 * window.devicePixelRatio,
+      560 * window.devicePixelRatio,
       true
     )
   } catch (e) { }
 }
 
-//把落款文本插入到光标处（多行落款按段落插入）
+function insertBlankLinesBeforeSignature(sel, count) {
+  for (let i = 0; i < count; i++) {
+    try { sel.TypeParagraph() } catch (e) { }
+  }
+}
+
+function countTrailingBlankParagraphs(doc) {
+  let blankCount = 0
+  try {
+    const paragraphs = doc.Paragraphs
+    for (let i = paragraphs.Count; i >= 1; i--) {
+      const text = paragraphs.Item(i).Range.Text.replace(/[\r\n]+$/, '').trim()
+      if (!text) blankCount++
+      else break
+    }
+  } catch (e) { }
+  return blankCount
+}
+
+//把落款文本插入到文末（多行落款按段落插入）
 //本按钮的明确功能是插入用户保存的落款内容，属于"插入落款"按钮的合规例外
-function insertSignatureText(doc, text) {
+function insertSignatureText(doc, text, autoDate = true) {
   if (!text) return
   let undoRecord = null
   try {
@@ -582,37 +616,52 @@ function insertSignatureText(doc, text) {
     // 移到文末再插入，不插入到光标处
     const sel = window.Application.ActiveWindow.Selection
     sel.EndKey(6)  // 6 = wdStory，移到文档末尾
+    const blankCount = countTrailingBlankParagraphs(doc)
+    insertBlankLinesBeforeSignature(sel, Math.max(0, 2 - blankCount))
     const lines = String(text).replace(/\r+$/, '').split(/\r?\n/)
-    //多行落款：每行独立成段，按落款格式（右对齐、仿宋）写入
-    const bodyFont = getAvailableFont(getSettings().bodyFont, '仿宋')
+    const footerElements = []
+    const settings = getSettings()
+    const bodyFont = getAvailableFont(settings.bodyFont, '仿宋')
     for (let i = 0; i < lines.length; i++) {
       const lineText = lines[i]
       try {
         if (i > 0) sel.TypeParagraph()
         if (lineText) {
+          const lineStart = sel.Start
           sel.TypeText(lineText)
+          footerElements.push({ start: lineStart, length: lineText.length, type: 'sig' })
           //落款右对齐
           try { sel.ParagraphFormat.Alignment = 2 } catch (e) { } // 2 = right
+          try { sel.ParagraphFormat.LineSpacingRule = 4 } catch (e) { }
+          try { sel.ParagraphFormat.LineSpacing = settings.lineSpacing } catch (e) { }
           try { sel.Font.Name = bodyFont } catch (e) { }
+          try { sel.Font.Size = settings.bodyFontSize } catch (e) { }
           try { sel.Font.NameAscii = 'Times New Roman' } catch (e) { }
           try { sel.Font.NameOther = 'Times New Roman' } catch (e) { }
         }
       } catch (e) { }
     }
-    //自动追加当天日期
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
-    const day = now.getDate()
-    const dateStr = year + '年' + month + '月' + day + '日'
-    try {
-      sel.TypeParagraph()
-      sel.TypeText(dateStr)
-      try { sel.ParagraphFormat.Alignment = 2 } catch (e) { }
-      try { sel.Font.Name = bodyFont } catch (e) { }
-      try { sel.Font.NameAscii = 'Times New Roman' } catch (e) { }
-      try { sel.Font.NameOther = 'Times New Roman' } catch (e) { }
-    } catch (e) { }
+    if (autoDate) {
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = now.getMonth() + 1
+      const day = now.getDate()
+      const dateStr = year + '年' + month + '月' + day + '日'
+      try {
+        sel.TypeParagraph()
+        const lineStart = sel.Start
+        sel.TypeText(dateStr)
+        footerElements.push({ start: lineStart, length: dateStr.length, type: 'date' })
+        try { sel.ParagraphFormat.Alignment = 2 } catch (e) { }
+        try { sel.ParagraphFormat.LineSpacingRule = 4 } catch (e) { }
+        try { sel.ParagraphFormat.LineSpacing = settings.lineSpacing } catch (e) { }
+        try { sel.Font.Name = bodyFont } catch (e) { }
+        try { sel.Font.Size = settings.bodyFontSize } catch (e) { }
+        try { sel.Font.NameAscii = 'Times New Roman' } catch (e) { }
+        try { sel.Font.NameOther = 'Times New Roman' } catch (e) { }
+      } catch (e) { }
+    }
+    try { applyFooterAlignment(doc, settings, footerElements, getAvailableFont) } catch (e) { }
   } catch (e) { }
   if (undoRecord) {
     try { undoRecord.EndCustomRecord() } catch (e2) { }
@@ -627,11 +676,17 @@ function markSelectedElement() {
     return
   }
   let selText = ''
+  let selStart = 0
+  let selEnd = 0
   try {
     const sel = window.Application.ActiveWindow.Selection
-    selText = String(sel.Text || '').replace(/[\r\n]+$/, '').trim()
+    selStart = sel.Start
+    selEnd = sel.End
+    if (selEnd > selStart) {
+      selText = String(sel.Text || '').replace(/[\r\n]+$/, '').trim()
+    }
   } catch (e) { }
-  if (!selText) {
+  if (selEnd <= selStart || !selText) {
     alert('请先在文档中选中要标记的文字，再点此按钮')
     return
   }
@@ -1006,7 +1061,7 @@ function mergePanelEdits(oldList, newList) {
       if (doc && old && old.length > 0) {
         try {
           const oldText = getSegmentText(doc, start, old.length)
-          if (oldText) deleteTypeMemory(oldText)
+          if (oldText) deleteTypeMemory(oldText, doc)
         } catch (e) { }
       }
       continue
@@ -1148,6 +1203,24 @@ function OnGetLabel() {
   return ''
 }
 
+function OnGetSelectedItemID(control) {
+  const eleId = control && control.Id
+  if (eleId === 'ddlFooterLayout') {
+    const settings = getSettings()
+    return settings.footerLayoutMode === 'pretty' ? 'footerLayoutPretty' : 'footerLayoutOfficial'
+  }
+  return ''
+}
+
+function OnGetPressed(control) {
+  const eleId = control && control.Id
+  if (eleId === 'chkFooterLayout') {
+    const settings = getSettings()
+    return !!settings.enableFooterLayout
+  }
+  return false
+}
+
 const VERSION_URL = 'https://wpsautoformat.netlify.app/version.txt'
 const PROJECT_URL = 'https://gitee.com/rainsoft0456/wpsautoformat'
 
@@ -1212,7 +1285,9 @@ export default {
   GetImage,
   OnGetEnabled,
   OnGetVisible,
-  OnGetLabel
+  OnGetLabel,
+  OnGetSelectedItemID,
+  OnGetPressed
 }
 
 //导出设置相关函数供dialog.js使用

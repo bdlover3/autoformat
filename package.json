@@ -1,33 +1,53 @@
-{
-	"name": "autoformat",
-	"addonType": "wps",
-	"version": "2.0.0",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"dev": "vite --port 3889",
-		"build": "vite build",
-		"pubtodoc": "wpsjs build && mkdir docs 2>nul && copy wps-addon-build\\autoformat.7z docs\\",
-		"preview": "vite preview",
-		"lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
-		"format": "prettier --write src/"
-	},
-	"dependencies": {
-		"core-js": "^3.37.1",
-		"et-jsapi-declare": "^2.5.0",
-		"vue": "^3.4.29",
-		"vue-router": "^4.3.3",
-		"wpp-jsapi-declare": "^1.2.0"
-	},
-	"devDependencies": {
-		"@rushstack/eslint-patch": "^1.8.0",
-		"@vitejs/plugin-vue": "^5.0.5",
-		"@vue/eslint-config-prettier": "^9.0.0",
-		"eslint": "^8.57.0",
-		"eslint-plugin-vue": "^9.23.0",
-		"prettier": "^3.2.5",
-		"vite": "^5.3.1",
-		"wps-jsapi-declare": "^2.2.0",
-		"wpsjs": "latest"
-	}
+﻿{
+  "name": "wps-autoformat",
+  "addonType": "wps",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WPS Office JS 加载项 — 一键格式化中文公文，符合 GB/T 9704 标准",
+  "keywords": [
+    "wps",
+    "公文",
+    "格式化",
+    "GB/T 9704",
+    "加载项",
+    "Vue"
+  ],
+  "license": "MIT",
+  "author": "rainsoft0456",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bdlover3/autoformat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bdlover3/autoformat/issues"
+  },
+  "homepage": "https://wpsautoformat.netlify.app/",
+  "scripts": {
+    "dev": "vite --port 3889",
+    "build": "vite build",
+    "pubtodoc": "wpsjs build && mkdir docs 2>nul && copy wps-addon-build\\autoformat.7z docs\\",
+    "deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
+    "format": "prettier --write src/"
+  },
+  "dependencies": {
+    "core-js": "^3.37.1",
+    "et-jsapi-declare": "^2.5.0",
+    "vue": "^3.4.29",
+    "vue-router": "^4.3.3",
+    "wpp-jsapi-declare": "^1.2.0"
+  },
+  "devDependencies": {
+    "@rushstack/eslint-patch": "^1.8.0",
+    "@vitejs/plugin-vue": "^5.0.5",
+    "@vue/eslint-config-prettier": "^9.0.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.23.0",
+    "prettier": "^3.2.5",
+    "vite": "^5.3.1",
+    "wps-jsapi-declare": "^2.2.0",
+    "wpsjs": "latest"
+  }
 }

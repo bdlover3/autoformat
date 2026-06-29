@@ -1,0 +1,11 @@
+﻿{
+  "outputDirectory": "vercel-publish",
+  "headers": [
+    {
+      "source": "/autoformat.7z",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-7z-compressed" }
+      ]
+    }
+  ]
+}

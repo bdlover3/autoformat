@@ -238,6 +238,12 @@ export function ensureBlankLineAfterTitle(elements) {
         const insertPos = paraEnd
         doc.Range(insertPos, insertPos).InsertAfter('\r')
         inserted++
+        // 更新插入点之后所有元素的 start，保持指针同步
+        for (const e of elements) {
+          if (e.start >= insertPos) {
+            e.start++
+          }
+        }
       } catch (e) { }
     }
   } catch (e) {
@@ -364,6 +370,14 @@ export function ensureBlankLinesBeforeFooter(elements) {
   } finally {
     if (undoRecord) {
       try { undoRecord.EndCustomRecord() } catch (e2) { }
+    }
+  }
+  // 更新落款区之后所有元素的 start，保持指针同步
+  if (inserted > 0) {
+    for (const el of elements) {
+      if (el.start >= footerParaStart) {
+        el.start += inserted
+      }
     }
   }
   return inserted

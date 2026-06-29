@@ -25,7 +25,7 @@ export default defineConfig({
       '/remote/version.txt': {
         target: 'https://wpsautoformat.netlify.app',
         changeOrigin: true,
-        rewrite: (path) => '/version.txt'
+        rewrite: () => '/version.txt'
       }
     }
   }

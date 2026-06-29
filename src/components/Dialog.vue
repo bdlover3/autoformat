@@ -234,6 +234,20 @@
         <span class="form-hint">（启用后排版面板不再显示"未检测到落款或发言人"提示）</span>
       </div>
       <div class="form-row">
+        <label>启用落款排版</label>
+        <input type="checkbox" v-model="settings.enableFooterLayout" />
+      </div>
+      <div class="form-row">
+        <label>落款排版方式</label>
+        <select v-model="settings.footerLayoutMode" :disabled="!settings.enableFooterLayout">
+          <option value="official">公文落款</option>
+          <option value="pretty">美观落款</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <span class="form-hint">（启用后对检测到的落款和日期使用所选方式对齐）</span>
+      </div>
+      <div class="form-row">
         <label>标题后自动换行</label>
         <input type="checkbox" v-model="settings.autoSplitSubtitle" />
       </div>
@@ -328,6 +342,9 @@ export default {
       clearFormatting: true,
       disableFontWarning: false,
       disableFooterWarning: false,
+      enableFooterLayout: true,
+      footerLayoutMode: 'pretty',
+      footerLayoutDefaultVersion: 1,
       autoSplitSubtitle: false
     })
 

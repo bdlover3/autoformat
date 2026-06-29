@@ -14,7 +14,7 @@
 //==============================================================
 
 import { RULES } from './rules.js'
-import { measureWidth } from './patterns.js'
+import { measureWidth, datePattern } from './patterns.js'
 import { matchDetect } from './detect.js'
 
 //--- 对齐方式常量 ---
@@ -239,7 +239,63 @@ export function applySpecialFormat(doc, settings, elements, getAvailableFont) {
  * @param {Array} sigGroup 落款+日期元素列表
  * @param {Function} getAvailableFont
  */
+function measureFooterDateWidth(text) {
+  if (!text) return 0
+  const clean = String(text).replace(/\s+/g, '')
+  if (/^\d{4}年\d{1,2}月\d{1,2}日$/.test(clean)) return 8
+  if (datePattern.test(text)) return measureWidth(clean)
+  return measureWidth(text)
+}
+
+function applyOfficialFooterLayout(lines, lineCharCount) {
+  const sigLines = lines.filter(l => l.type === 'sig')
+  const dateLine = lines.find(l => l.type === 'date')
+  const sigW = sigLines.reduce((m, l) => (l.width > m ? l.width : m), 0)
+  const dateW = dateLine ? dateLine.width : 0
+  const bothPresent = sigLines.length > 0 && dateLine
+  const dateLonger = bothPresent && dateW > sigW
+  const dateRightBlankFinal = 2
+  const sigRightBlankFinal = bothPresent
+    ? (dateLonger ? 4 + (dateW - sigW) : 4)
+    : 2
+
+  for (const line of lines) {
+    if (line.type === 'sig') {
+      line.leftSpaces = Math.max(0, Math.floor(lineCharCount - line.width - sigRightBlankFinal - 1))
+    } else if (line.type === 'date') {
+      line.leftSpaces = Math.max(0, Math.floor(lineCharCount - line.width - dateRightBlankFinal - 1))
+    } else {
+      line.leftSpaces = Math.max(0, Math.floor(lineCharCount - line.width - 2 - 1))
+    }
+  }
+}
+
+function applyPrettyFooterLayout(lines, lineCharCount) {
+  const sigLines = lines.filter(l => l.type === 'sig')
+  const dateLine = lines.find(l => l.type === 'date')
+  const sigW = sigLines.reduce((m, l) => (l.width > m ? l.width : m), 0)
+  const dateW = dateLine ? dateLine.width : 0
+  const bothPresent = sigLines.length > 0 && dateLine
+  const baseRightBlank = 2
+  const sigLeftSpaces = Math.max(0, Math.floor(lineCharCount - sigW - baseRightBlank - 1))
+  const dateLeftSpaces = bothPresent
+    ? Math.max(0, Math.floor(sigLeftSpaces + Math.max(0, (sigW - dateW) / 2)))
+    : Math.max(0, Math.floor(lineCharCount - dateW - baseRightBlank - 1))
+
+  for (const line of lines) {
+    if (line.type === 'sig') {
+      line.leftSpaces = Math.max(0, Math.floor(sigLeftSpaces + Math.max(0, (sigW - line.width) / 2)))
+    } else if (line.type === 'date') {
+      line.leftSpaces = dateLeftSpaces
+    } else {
+      line.leftSpaces = Math.max(0, Math.floor(lineCharCount - line.width - baseRightBlank - 1))
+    }
+  }
+}
+
 export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) {
+  if (!settings || !settings.enableFooterLayout) return []
+
   const lineCharCount = calcLineCharCount(doc, settings)
   const bodyFontName = getAvailableFont(settings.bodyFont, '仿宋')
 
@@ -285,87 +341,43 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
 
   //测量每行宽度（半字符单位，中文字=1，半角字符=0.5）
   for (const line of lines) {
-    line.width = measureWidth(line.text)
+    line.width = line.type === 'date' ? measureFooterDateWidth(line.text) : measureWidth(line.text)
   }
 
-  // GB/T 9704-2012 不加盖印章公文排版规则（7.3.5.2）：
-  //   默认：发文机关署名右空二字；成文日期在署名下一行，首字比署名首字右移二字。
-  //   日期长于署名时：成文日期右空二字编排，并相应增加发文机关署名右空字数
-  //   （署名首字追齐日期首字，使日期右空二字固定）。
-  //
-  // 关键不变量：署名右端和日期右端都对齐到"版心右边缘 - 2 字"（两者右端对齐），
-  // 日期首字比署名首字右移 2 字是通过"署名整体左移 2 字"实现（署名 rightBlank 加 2），
-  // 不是通过"日期减少 rightBlank"实现——否则日期右端会超出署名右端，对不上。
-  //
-  // 署名允许 1 行或 2 行（detect.js processFooter 最多收集 2 行 sig）：
-  //   多行署名视为一个整体，所有 sig 行共用同一 rightBlank，各行右端对齐。
-  //   署名整体宽度 sigW 取各行宽度的最大值（最宽行决定署名整体的右端）。
-  //
-  // 设 sigW=署名整体宽（各行最宽），dateW=日期宽：
-  //   dateW <= sigW：署名 rightBlank = 2 + 2 = 4（署名左移让日期首字右移2字），日期 rightBlank = 2
-  //   dateW >  sigW：日期 rightBlank = 2，署名 rightBlank = 2 + (dateW - sigW) + 2
-  //                 （署名追齐日期首字再多空2字，让日期首字仍比署名首字右移2字）
-  // 简化：两者右端都对齐到版心右边缘减 2 字；署名整体比日期左移 2 字（署名 rightBlank = 日期 rightBlank + 2）。
-  const sigLines = lines.filter(l => l.type === 'sig')
-  const dateLine = lines.find(l => l.type === 'date')
-  const sigW = sigLines.reduce((m, l) => (l.width > m ? l.width : m), 0)
-  const dateW = dateLine ? dateLine.width : 0
-  const bothPresent = sigLines.length > 0 && dateLine
-  const dateLonger = bothPresent && dateW > sigW
-
-  // 日期右端距版心右边缘 2 字（固定）
-  const dateRightBlankFinal = 2
-  // 署名右端距版心右边缘 = 2 + 2 = 4 字（署名整体左移 2 字，让日期首字比署名首字右移 2 字）
-  // 日期长于署名时，署名还要追齐日期首字：署名 rightBlank = 4 + (dateW - sigW)
-  const sigRightBlankFinal = bothPresent
-    ? (dateLonger ? 4 + (dateW - sigW) : 4)
-    : 2
-
-  // 计算每行的右空字数
-  for (const line of lines) {
-    if (line.type === 'sig') {
-      line.rightBlank = Math.max(0, sigRightBlankFinal)
-    } else if (line.type === 'date') {
-      line.rightBlank = Math.max(0, dateRightBlankFinal)
-    } else {
-      // 非 sig/date 的辅助行：右空二字兜底
-      line.rightBlank = 2
-    }
+  if (settings.footerLayoutMode === 'pretty') {
+    applyPrettyFooterLayout(lines, lineCharCount)
+  } else {
+    applyOfficialFooterLayout(lines, lineCharCount)
   }
 
   //用全角空格实现前导缩进——关键：用全角空格（U+3000），不用半角空格。
   //全角空格宽度 = 1 全角字，与 charWidth 的全角=1 完全一致，精度准确，对得齐。
   //用户可见空格、可手动增删调整，符合公文用户的操作习惯。
   //padW 是全角字单位宽度，全角空格数 = padW（1 全角空格 = 1 全角字宽）
-  //逆序处理：从文档末尾往前写，避免前导空格插入导致后续行字符位置偏移
+  //顺序处理：每次删/插前导空格后，用 delta 修正后续行的实时位置。
+  //若倒序处理，先处理的下方日期会被后处理的上方署名插空格再次推移，导致面板指针错位。
   const posUpdates = []
-  const docEnd = (function () { try { return doc.Content.End } catch (e) { return 0 } })()
-  for (let i = lines.length - 1; i >= 0; i--) {
+  let delta = 0
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    // 前导宽度 = 行宽 - 文本宽度 - 右空字数（保证右端距行尾 rightBlank 字）
-    // 安全余量 -1：measureWidth 对半角数字/字母按 0.5 全角字估算，但仿宋里混排 Times New Roman
-    // 半角数字实际宽度略大于 0.5，累积偏差会让 padW 偏大，顶满版心时把末字挤到第二行。
-    // 用 Math.floor 且预留 1 字余量，宁可右空多 1 字也不挤换行。
-    const padW = Math.max(0, lineCharCount - line.width - line.rightBlank - 1)
-    const fullSpaces = Math.floor(padW)  // 全角空格数（向下取整，保守不挤换行）
+    const fullSpaces = Math.max(0, Math.floor(line.leftSpaces || 0))
     let spaces = ''
     for (let j = 0; j < fullSpaces; j++) spaces += '\u3000'  // 全角空格 U+3000
     try {
       //防御性校验：el.start/el.length 合理，越界跳过
       if (typeof line.start !== 'number' || typeof line.length !== 'number') continue
       if (line.length <= 0) continue
-      if (docEnd > 0 && line.start + line.length > docEnd) continue
+      const docEnd = (function () { try { return doc.Content.End } catch (e) { return 0 } })()
+      const textStart = line.start + delta
+      const paraStart = line.paraStart + delta
+      if (docEnd > 0 && textStart + line.length > docEnd) continue
 
       //关键防删字：只动"段首到原文本起点"之间的前导空格，绝不碰原文本区间
-      //[line.start, line.start+line.length] 是原文本（detect 时 trim 后的位置），
-      //不管用户删换行导致段落怎么合并，这个区间内的文字保持不变。
-      //[line.paraStart, line.start) 是段首到原文本前的前导区（含上次塞的旧空格），
+      //[textStart, textStart+line.length] 是原文本当前实时位置。
+      //[paraStart, textStart) 是段首到原文本前的前导区（含上次塞的旧空格），
       //把旧前导删掉，换成新全角空格。
-      const textStart = line.start
-
-      //1) 删旧前导空格 [paraStart, textStart)——只删空格和全角空格，遇非空格即停（保住段首若有缩进外的内容）
       let leadEnd = textStart
-      while (leadEnd > line.paraStart) {
+      while (leadEnd > paraStart) {
         const ch = doc.Range(leadEnd - 1, leadEnd).Text
         if (ch === ' ' || ch === '\u3000' || ch === '\t') {
           leadEnd--
@@ -373,37 +385,26 @@ export function applyFooterAlignment(doc, settings, sigGroup, getAvailableFont) 
           break
         }
       }
-      if (leadEnd < textStart) {
-        doc.Range(leadEnd, textStart).Delete()  // 删旧前导空格
-        // 删除后原文本位置 = leadEnd，长度不变，在 leadEnd 处插新空格
-        const insertPos = leadEnd
-        //2) 插新全角空格
-        if (spaces) {
-          doc.Range(insertPos, insertPos).InsertBefore(spaces)
-        }
-        //3) 设段落格式（用插完空格后的段落）
-        const newPara = doc.Range(insertPos, insertPos + spaces.length + line.length).Paragraphs.Item(1)
-        const pRange = newPara.Range
-        pRange.ParagraphFormat.Alignment = 0  // 左对齐（空格控制缩进）
-        pRange.ParagraphFormat.LeftIndent = 0
-        pRange.ParagraphFormat.RightIndent = 0
-        pRange.ParagraphFormat.FirstLineIndent = 0
-        pRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-        posUpdates.push({ oldStart: line.start, newStart: insertPos + spaces.length, newLength: line.length })
-      } else {
-        //无旧前导空格（leadEnd === textStart），直接在 textStart 前插空格
-        if (spaces) {
-          doc.Range(textStart, textStart).InsertBefore(spaces)
-        }
-        const newPara = doc.Range(textStart, textStart + spaces.length + line.length).Paragraphs.Item(1)
-        const pRange = newPara.Range
-        pRange.ParagraphFormat.Alignment = 0
-        pRange.ParagraphFormat.LeftIndent = 0
-        pRange.ParagraphFormat.RightIndent = 0
-        pRange.ParagraphFormat.FirstLineIndent = 0
-        pRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
-        posUpdates.push({ oldStart: line.start, newStart: textStart + spaces.length, newLength: line.length })
+
+      const removed = textStart - leadEnd
+      const insertPos = leadEnd
+      if (removed > 0) {
+        doc.Range(leadEnd, textStart).Delete()
       }
+      if (spaces) {
+        doc.Range(insertPos, insertPos).InsertBefore(spaces)
+      }
+
+      const newStart = insertPos + spaces.length
+      const newPara = doc.Range(insertPos, insertPos + spaces.length + line.length).Paragraphs.Item(1)
+      const pRange = newPara.Range
+      pRange.ParagraphFormat.Alignment = 0
+      pRange.ParagraphFormat.LeftIndent = 0
+      pRange.ParagraphFormat.RightIndent = 0
+      pRange.ParagraphFormat.FirstLineIndent = 0
+      pRange.ParagraphFormat.CharacterUnitFirstLineIndent = 0
+      posUpdates.push({ oldStart: line.start, newStart, newLength: line.length })
+      delta += spaces.length - removed
     } catch (e) { }
   }
   return posUpdates

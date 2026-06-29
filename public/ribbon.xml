@@ -5,9 +5,19 @@
                 <group id="grpAutoFormat" label="一键排版">
                     <button id="btnAutoFormat" label="一键排版" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <button id="btnUndoFormat" label="一键恢复" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnFormatSettings" label="格式设置" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                     <separator id="sepGrp1"/>
                     <button id="btnMarkElement" label="标记元素" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <button id="btnDetectSignature" label="元素管理" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <separator id="sepElementFooter"/>
                     <button id="btnInsertSignature" label="插入落款" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
+                    <box id="boxFooterLayout" boxStyle="vertical" visible="true">
+                        <checkBox id="chkFooterLayout" label="排版落款" onAction="ribbon.OnAction" getPressed="ribbon.OnGetPressed" enabled="true" visible="true"/>
+                        <dropDown id="ddlFooterLayout" onAction="ribbon.OnAction" getSelectedItemID="ribbon.OnGetSelectedItemID" enabled="true" visible="true" sizeString="美观落款">
+                            <item id="footerLayoutOfficial" label="公文落款"/>
+                            <item id="footerLayoutPretty" label="美观落款"/>
+                        </dropDown>
+                    </box>
                     <separator id="sep1"/>
                     <box id="boxSplitRemove" boxStyle="vertical" visible="true">
                         <button id="btnSplitTitle" label="标题后换行" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
@@ -18,13 +28,10 @@
                         <button id="btnRemoveTitleEndSymbol" label="删除标题末符号" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                         <button id="btnBoldTitleWithTail" label="&quot;X是&quot;整句加粗" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                     </box>
-                    <separator id="sep2"/>
-                    <button id="btnDetectSignature" label="记忆格式管理" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
                 </group>
-                <separator id="sepGrp2"/>
                 <group id="grpFunc" label="功能">
-                    <button id="btnFormatSettings" label="固定格式设置" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="large"/>
-                    <separator id="sep3"/>
+                
+                    <separator id="sep1"/>
                     <button id="btnCheckUpdate" label="检查更新" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                     <button id="btnAbout" label="关于插件" onAction="ribbon.OnAction" enabled="true" getImage="ribbon.GetImage" visible="true" size="normal"/>
                 </group>

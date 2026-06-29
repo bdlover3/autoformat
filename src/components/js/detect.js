@@ -43,7 +43,7 @@ function buildBaseTxt(doc) {
       try {
         const para = paragraphs.Item(i)
         text += para.Range.Text
-      } catch (e) { }
+      } catch (e) { console.warn('[buildBaseTxt] paragraph', i, 'failed') }
     }
   } catch (e) { }
   return text
@@ -219,9 +219,16 @@ function mergeContinuationLines(baseTxt, firstStart, firstLength, maxScanLines, 
  * 标题/正文同行截断：在 [start, start+length) 区间内找第一个结束符号，
  * 截断到符号前。返回新的 { start, length }；无符号或符号在末尾返回原值。
  */
-function truncateSegmentAtEndSymbol(baseTxt, start, length) {
+function truncateSegmentAtEndSymbol(baseTxt, start, length, type) {
   const segText = baseTxt.substring(start, start + length)
-  const symIdx = findFirstEndSymbol(segText)
+  let symIdx = findFirstEndSymbol(segText)
+  if (type === 'h3') {
+    const marker = segText.match(/^\d+\./)
+    if (marker && symIdx >= 0 && symIdx < marker[0].length) {
+      const nextIdx = findFirstEndSymbol(segText.slice(marker[0].length))
+      symIdx = nextIdx >= 0 ? marker[0].length + nextIdx : -1
+    }
+  }
   if (symIdx <= 0 || symIdx >= segText.length) return { start, length }
   return { start, length: symIdx }
 }
@@ -250,7 +257,7 @@ export function detectElements(doc, settings) {
   // 按段扫，逐字比对：段文本与记忆 text 取最长公共前缀，
   // 若公共前缀 >= 记忆 length，则按记忆 type 认领该段 length 长度；
   // 不相符（前缀 < 记忆 length 或记忆格式旧/损坏）则不认领，重新走检测规则。
-  const memory = loadTypeMemory()
+  const memory = loadTypeMemory(doc)
   const memoryKeys = Object.keys(memory).filter(k => k && k[0] !== '_')
   if (memoryKeys.length > 0) {
     const paras = scanAllParagraphs(baseTxt)
@@ -441,7 +448,7 @@ export function detectElements(doc, settings) {
 
       // 标题/正文同行截断（h1/h2/h3）
       if (sp.truncateAtEndSymbol) {
-        const trunc = truncateSegmentAtEndSymbol(baseTxt, segStart, segLength)
+        const trunc = truncateSegmentAtEndSymbol(baseTxt, segStart, segLength, rule.type)
         segStart = trunc.start
         segLength = trunc.length
       }
@@ -451,7 +458,7 @@ export function detectElements(doc, settings) {
         const merged = mergeContinuationLines(baseTxt, segStart, segLength, sp.maxScanLines, used)
         // 合并后再做一次截断（续行里可能有结束符号）
         if (sp.truncateAtEndSymbol) {
-          const trunc = truncateSegmentAtEndSymbol(baseTxt, merged.start, merged.length)
+          const trunc = truncateSegmentAtEndSymbol(baseTxt, merged.start, merged.length, rule.type)
           result.push({ start: trunc.start, length: trunc.length, type: rule.type })
           used.add(trunc.start, trunc.start + trunc.length)
         } else {
@@ -509,7 +516,7 @@ function processFooter(baseTxt, used, result, lineCharCount) {
 
   // 落款识别规则：
   //   1. 必须有日期（datePattern 匹配），无日期则不认落款区
-  //   2. 落款每行必须不满行（宽度 < 行宽 75%），满行是正文不是落款
+  //   2. 落款每行：以结束标点结尾的满行是正文不认，其他（单位名等）不受宽度限制
   //   3. 落款最多 2 行（日期上方），超过 2 行则不是落款
   //   4. 不强行找落款：没有日期就不认
 
@@ -534,16 +541,19 @@ function processFooter(baseTxt, used, result, lineCharCount) {
   result.push({ start: dp.start, length: dp.length, type: 'date' })
   used.add(dp.start, dp.start + dp.length)
 
-  // 落款：从日期向上收集，最多 2 行，每行必须不满行
+  // 落款：从日期向上收集，最多 2 行
+  // 以结束标点结尾的满行 → 正文，不认落款
+  // 不以结束标点结尾 → 认落款（单位名不受宽度限制）
   let collected = 0
   let cur = dateParaIdx - 1
   while (cur >= 0 && collected < 2) {
     const p = paras[cur]
     if (used.contains(p.start, p.start + p.length)) { cur--; continue }
-    // 满行 → 正文，不是落款
-    if (measureWidth(p.text) >= lineCharCount * 0.75) break
+    if (p.text === '落款区') { cur--; continue }
     // 客套语中断
     if (isClosingFormula(p.text)) break
+    // 以结束标点结尾且满行 → 正文，停止收集
+    if (/[。！？；：]$/.test(p.text) && measureWidth(p.text) >= lineCharCount * 0.75) break
     result.push({ start: p.start, length: p.length, type: 'sig' })
     used.add(p.start, p.start + p.length)
     collected++

@@ -67,7 +67,7 @@ WPS Office JS add-in (`wpsjs`) that one-click formats Chinese 公文 (official d
 4. **记录匹配的长度**，分两侧处理：
    - **a. 面板侧**：此长度内文字保持原样，超过此长度的部分**变灰色**提示用户超出部分与原文不一致。实现：`matched: false` 标记 + FormatPanel 的 `.text-muted { color: #bbb }` 样式。
    - **b. 原文侧**：原文对应位置按 `matchedLen` 保持对应元素格式（一般不变），超过 `matchedLen` 处**变回正文格式**（字体/字号/加粗刷回仿宋三号非加粗），**唯独不处理缩进**（因为缩进会影响整行）。实现：`mergePanelEdits` 对 `[start+matchedLen, start+length]` 区间刷正文格式，`length` 截断为 `matchedLen`。
-5. **用户修改的列入记忆**：`recordTypeChanges` 把用户调整过的元素写入 `typememory.json`，记忆格式 `{ text: { type, length } }` —— 记录"某位置有多长属于某特殊格式，文字是什么"。
+5. **用户修改的列入记忆**：`recordTypeChanges` 把用户调整过的元素写入 `typememory_<hash>.json`，记忆格式 `{ text: { type, length } }` —— 记录"某位置有多长属于某特殊格式，文字是什么"。
 6. **下次一键排版时，遇到记忆位置逐字比对**：`detect.js` 记忆预认领对每段每条记忆取最长公共前缀：
    - **相符**（公共前缀 >= 记忆 length）→ 按记忆 type 认领该段 length 长度，跳过正则检测。
    - **不相符**（前缀 < 记忆 length）→ 不认领，重新走检测规则，记忆保留（等用户下次微调刷新）。
@@ -179,8 +179,8 @@ src/components/
 
 | 组 | 按钮 | 说明 |
 |----|------|------|
-| 一键排版 | `btnAutoFormat` 一键排版、`btnUndoFormat` 一键恢复、(标记元素/插入落款)、(标题后换行/删除全部空行)(删除标题末符号/"X是"整句加粗)、`btnDetectSignature` 记忆格式管理 | 核心排版与微调 |
-| 功能 | `btnFormatSettings` 固定格式设置、`btnCheckUpdate` 检查更新、`btnAbout` 关于 | 设置与杂项 |
+| 一键排版 | `btnAutoFormat` 一键排版、`btnUndoFormat` 一键恢复、`btnFormatSettings` 固定格式设置、(标记元素/插入落款)、(标题后换行/删除全部空行)(删除标题末符号/"X是"整句加粗)、`btnDetectSignature` 记忆格式管理 | 核心排版与微调 |
+| 功能 | `btnCheckUpdate` 检查更新、`btnAbout` 关于 | 设置与杂项 |
 
 - `btnInsertSignature` 打开落款库对话框（`InsertSignature.vue`，路由 `/insertsig`）：0 个落款提示、1 个直接插入光标处、多个弹窗选择。落款库存储在 `AppDataPath\WPSAutoFormat\signatures.json`，管理见 `js/signature.js`。
 - `btnMarkElement` 打开标记对话框（`MarkElement.vue`，路由 `/markelement`）：取当前选区，用户选类型后走 `addSpecialElement` 统一添加流程（含写入记忆）。

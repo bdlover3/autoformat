@@ -14,7 +14,7 @@ export const h1Pattern = /^[一二三四五六七八九十]+、/
 export const h2Pattern = /^[（(][一二三四五六七八九十]+[）)]/
 export const h3Pattern = /^\d+\./
 export const h4Pattern = /^[（(]\d+[）)]/
-export const datePattern = /^\d{4}([年.-]\d{1,2}([月.-]\d{1,2}日?)?|年\d{1,2}月(\d{1,2}日)?)/
+export const datePattern = /^\d{4}\s*([年.-]\s*\d{1,2}(\s*[月.-]\s*\d{1,2}\s*日?)?|年\s*\d{1,2}\s*月(\s*\d{1,2}\s*日)?)/
 export const attachmentPattern = /^附\s*件\d*/
 export const endSymbolPattern = /[。！？；]/
 

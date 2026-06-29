@@ -4,27 +4,43 @@
 // 记住用户在面板中调整过的文本→类型映射
 // 下次排版时自动应用，精确匹配模式
 //
-// 存储路径：AppDataPath\WPSAutoFormat\typememory.json
+// 存储路径：AppDataPath\WPSAutoFormat\typememory_<hash>.json
 // 格式：{ "市AGCC合作项目工作专班办公室": "sig", ... }
 // 相同开始位置的多次修改，以最后一次为准
 //==============================================================
 
 import { getSegmentText } from './detect.js'
+import { addSignature } from './signature.js'
+
+function getDocMemoryKey(doc) {
+  let raw = ''
+  try {
+    const d = doc || (window.Application && window.Application.ActiveDocument)
+    raw = (d && (d.FullName || d.Name)) || ''
+  } catch (e) { }
+  if (!raw) return 'global'
+  let hash = 0
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) - hash) + raw.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36)
+}
 
 /** 获取记忆文件路径 */
-function getTypeMemoryFilePath() {
+function getTypeMemoryFilePath(doc) {
   try {
     if (typeof window.Application !== 'undefined' && window.Application.Env) {
       const appDataPath = window.Application.Env.GetAppDataPath()
-      return appDataPath + '\\WPSAutoFormat\\typememory.json'
+      return appDataPath + '\\WPSAutoFormat\\typememory_' + getDocMemoryKey(doc) + '.json'
     }
   } catch (e) { }
   return null
 }
 
 /** 读取记忆文件，返回 { text: type } 对象，失败返回 {} */
-export function loadTypeMemory() {
-  const filePath = getTypeMemoryFilePath()
+export function loadTypeMemory(doc) {
+  const filePath = getTypeMemoryFilePath(doc)
   if (!filePath) return {}
   try {
     if (typeof window.Application !== 'undefined' && window.Application.FileSystem) {
@@ -49,8 +65,8 @@ export function loadTypeMemory() {
 }
 
 /** 写入记忆文件 */
-export function saveTypeMemory(memory) {
-  const filePath = getTypeMemoryFilePath()
+export function saveTypeMemory(memory, doc) {
+  const filePath = getTypeMemoryFilePath(doc)
   if (!filePath) return
   try {
     const fs = window.Application.FileSystem
@@ -80,7 +96,7 @@ export function recordTypeChanges(oldElements, newElements, doc) {
     }
     return ''
   }
-  const memory = loadTypeMemory()
+  const memory = loadTypeMemory(doc)
   let changed = false
 
   // 位置索引：start → text，用于相同位置去重（最后一次修改为准）
@@ -99,6 +115,11 @@ export function recordTypeChanges(oldElements, newElements, doc) {
   for (const el of newElements) {
     const t = getText(el)
     if (!t || !el || !el.type) continue
+    if (el.type === 'sig' || el.type === 'authorInfo') {
+      addSignature(t)
+      continue
+    }
+    if (el.type === 'date') continue
     // 跳过 length=0 的元素：matchedLen=0 时保留原 length 但 matched=false，
     // 此类元素无有效区间，不写入记忆（否则下次排版预认领会产生空条）
     if (typeof el.length === 'number' && el.length <= 0) continue
@@ -131,20 +152,20 @@ export function recordTypeChanges(oldElements, newElements, doc) {
 
   if (changed) {
     memory._posIndex = posIndex
-    saveTypeMemory(memory)
+    saveTypeMemory(memory, doc)
   }
 }
 
 /** 删除单条记忆 */
-export function deleteTypeMemory(text) {
-  const memory = loadTypeMemory()
+export function deleteTypeMemory(text, doc) {
+  const memory = loadTypeMemory(doc)
   if (text in memory) {
     delete memory[text]
-    saveTypeMemory(memory)
+    saveTypeMemory(memory, doc)
   }
 }
 
 /** 清空所有记忆 */
-export function clearTypeMemory() {
-  saveTypeMemory({})
+export function clearTypeMemory(doc) {
+  saveTypeMemory({}, doc)
 }

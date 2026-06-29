@@ -26,6 +26,11 @@ function loadSettings(settings) {
           }
           if (content) {
             let parsed = JSON.parse(content)
+            if (parsed.footerLayoutDefaultVersion !== 1) {
+              parsed.enableFooterLayout = true
+              parsed.footerLayoutMode = 'pretty'
+              parsed.footerLayoutDefaultVersion = 1
+            }
             Object.keys(parsed).forEach(key => {
               if (key in settings) {
                 settings[key] = parsed[key]
@@ -92,6 +97,13 @@ function saveSettings(settings) {
     } catch (e) {
     }
 
+    try {
+      if (typeof window.Application !== 'undefined' && window.Application.ribbonUI) {
+        window.Application.ribbonUI.Invalidate()
+      }
+    } catch (e) {
+    }
+
     alert('设置已保存！')
   } catch (e) {
     alert('保存设置失败：' + e.message + '\n' + e.stack)
@@ -126,6 +138,9 @@ function resetSettings(settings) {
           pageNumberPosition: 'center',
           clearFormatting: true,
           disableFontWarning: false,
+          enableFooterLayout: true,
+          footerLayoutMode: 'pretty',
+          footerLayoutDefaultVersion: 1,
           autoSplitSubtitle: false
         }
     }

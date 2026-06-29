@@ -1,6 +1,5 @@
 <template>
   <div class="memory-panel">
-    <div class="panel-header">记忆管理</div>
     <div class="panel-body">
       <template v-if="items.length > 0">
         <div
@@ -13,7 +12,7 @@
           <button class="btn-delete" @click="deleteItem(idx)" title="删除">✕</button>
         </div>
       </template>
-      <div v-else class="empty-hint">暂无记忆记录</div>
+      <div v-else class="empty-hint">暂无元素记录</div>
     </div>
     <div class="panel-footer">
       <button class="btn btn-clear" @click="clearAll" :disabled="items.length === 0">清空所有</button>
@@ -41,13 +40,13 @@ export default {
 
     // 从记忆文件直接读取（兼容新旧格式）
     try {
-      const memory = loadTypeMemory()
+      const memory = loadTypeMemory(window.__memoryDoc)
       for (const [text, entry] of Object.entries(memory)) {
         if (!text || text[0] === '_') continue  // 跳过内部索引键
         // 新格式：{ type, length }；旧格式：纯字符串 "type"
         const type = typeof entry === 'string' ? entry : (entry && entry.type)
         const len = typeof entry === 'string' ? text.length : (entry && typeof entry.length === 'number' ? entry.length : text.length)
-        if (type) items.value.push({ text, type, length: len })
+        if (type && type !== 'sig' && type !== 'date') items.value.push({ text, type, length: len })
       }
     } catch (e) { }
 
@@ -58,13 +57,13 @@ export default {
     function deleteItem(idx) {
       const text = items.value[idx].text
       items.value.splice(idx, 1)
-      deleteTypeMemory(text)
+      deleteTypeMemory(text, window.__memoryDoc)
     }
 
     function clearAll() {
       if (!confirm('确定清空所有记忆？')) return
       items.value = []
-      clearTypeMemory()
+      clearTypeMemory(window.__memoryDoc)
     }
 
     function closeDialog() {

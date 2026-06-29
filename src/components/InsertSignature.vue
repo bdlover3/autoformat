@@ -2,8 +2,12 @@
   <div class="sig-dialog">
     <div class="dialog-header">插入落款</div>
     <div class="dialog-body">
+      <label class="auto-date-row">
+        <input type="checkbox" v-model="autoDate" />
+        <span>自动插入时间</span>
+      </label>
       <template v-if="signatures.length > 0">
-        <div class="hint">点击落款直接插入到光标处：</div>
+        <div class="hint">点击落款插入到文末：</div>
         <div
           v-for="item in signatures"
           :key="item.id"
@@ -57,6 +61,7 @@ export default {
     const selected = ref(null)
     const newName = ref('')
     const newText = ref('')
+    const autoDate = ref(true)
 
     function onSelect(item) {
       selectedId.value = item.id
@@ -85,7 +90,7 @@ export default {
       // 通过 BroadcastChannel 通知主线程插入落款
       try {
         const bc = new BroadcastChannel('wps_insert_signature')
-        bc.postMessage({ type: 'insert', text: selected.value.text })
+        bc.postMessage({ type: 'insert', text: selected.value.text, autoDate: autoDate.value })
         setTimeout(() => { try { bc.close() } catch (e) { } }, 100)
       } catch (e) { }
       try { window.close() } catch (e) { }
@@ -96,7 +101,7 @@ export default {
     }
 
     return {
-      signatures, selectedId, selected, newName, newText,
+      signatures, selectedId, selected, newName, newText, autoDate,
       onSelect, onAdd, onDelete, onConfirm, closeDialog
     }
   }
@@ -134,6 +139,14 @@ export default {
   padding: 4px 14px;
   color: #888;
   font-size: 11px;
+}
+.auto-date-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 4px;
+  color: #333;
+  font-size: 12px;
 }
 .sig-item {
   position: relative;

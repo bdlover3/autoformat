@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 dist/
 wps-addon-build/
 .DS_Store
@@ -7,5 +7,11 @@ wps-addon-build/
 .codebuddy/
 *.7z
 vercel-publish/
+netlify-publish/
 .vercel/
 release/
+.env*
+
+
+# Local Netlify folder
+.netlify

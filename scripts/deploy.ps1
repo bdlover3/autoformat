@@ -1,58 +1,58 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
-# 1. 读取版本号
-$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-Write-Host "==> 部署 v$version" -ForegroundColor Cyan
-
-# 2. Vite 构建
-Write-Host "==> 1/6: Vite 构建" -ForegroundColor Yellow
-npm run build
-if ($LASTEXITCODE -ne 0) { throw "Vite 构建失败" }
-
-# 3. 生成离线插件 .7z（无交互）
-Write-Host "==> 2/6: 生成离线插件 .7z" -ForegroundColor Yellow
-node scripts/build-offline.js
-if ($LASTEXITCODE -ne 0) { throw "离线插件构建失败" }
-
-# 4. 准备纯净部署目录
-Write-Host "==> 3/6: 准备部署目录" -ForegroundColor Yellow
-Remove-Item -Recurse -Force vercel-publish -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force vercel-publish | Out-Null
-Copy-Item docs/index.html vercel-publish/
-Copy-Item docs/version.txt vercel-publish/
-Copy-Item docs/_headers vercel-publish/
-Copy-Item wps-addon-build/autoformat.7z vercel-publish/
-
-# 给 GitHub Release 留一份 .7z 副本（wpsjs build --exe 会删掉原始的 .7z）
-New-Item -ItemType Directory -Force release | Out-Null
-Copy-Item wps-addon-build/autoformat.7z release/
-
-# 5. 生成 exe
-Write-Host "==> 4/6: 生成 exe 安装包" -ForegroundColor Yellow
-wpsjs build --exe
-if ($LASTEXITCODE -ne 0) { throw "exe 构建失败" }
-
-# 6. GitHub Release
-Write-Host "==> 5/6: 创建 GitHub Release" -ForegroundColor Yellow
+$package = Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json
+$version = $package.version
+$packageName = $package.name
+$PublishDir = "netlify-publish"
+$ReleaseDir = "release"
 $tag = "v$version"
-$releaseTitle = "v$version"
-$notes = "详见 CHANGELOG.md"
-$existing = gh release view $tag --json tagName 2>$null
-if ($existing) {
-  Write-Host "  标签 $tag 已存在，跳过 Release 创建" -ForegroundColor DarkYellow
+$sevenZipPath = "wps-addon-build\$packageName.7z"
+$exePath = "wps-addon-build\$packageName.exe"
+$releaseSevenZipPath = "$ReleaseDir\$packageName.7z"
+
+Write-Host ">>> Deploy v$version" -ForegroundColor Cyan
+
+Write-Host "[1/6] Vite build..." -ForegroundColor Yellow
+npm run build
+if ($LASTEXITCODE -ne 0) { throw "Vite build failed" }
+
+Write-Host "[2/6] Generate .7z (select 'offline plugin')..." -ForegroundColor Yellow
+wpsjs build
+if ($LASTEXITCODE -ne 0) { throw "wpsjs build failed" }
+if (!(Test-Path $sevenZipPath)) { throw "Missing $sevenZipPath" }
+
+Write-Host "[3/6] Prepare publish and release files..." -ForegroundColor Yellow
+Remove-Item -Recurse -Force $PublishDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $PublishDir | Out-Null
+Copy-Item docs/index.html $PublishDir/
+Copy-Item docs/version.txt $PublishDir/
+Copy-Item docs/_headers $PublishDir/
+Copy-Item $sevenZipPath $PublishDir/
+New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
+Copy-Item $sevenZipPath $releaseSevenZipPath -Force
+
+Write-Host "[4/6] Generate exe..." -ForegroundColor Yellow
+wpsjs build --exe
+if ($LASTEXITCODE -ne 0) { throw "wpsjs build --exe failed" }
+if (!(Test-Path $exePath)) { throw "Missing $exePath" }
+
+Write-Host "[5/6] Create GitHub Release..." -ForegroundColor Yellow
+$existingTags = gh release list --json tagName --jq '.[].tagName'
+if ($existingTags -match [regex]::Escape($tag)) {
+  Write-Host "Release $tag already exists, skip." -ForegroundColor DarkYellow
 } else {
   git tag -f $tag
+  if ($LASTEXITCODE -ne 0) { throw "Git tag failed" }
   git push origin $tag --force
-  gh release create $tag --title $releaseTitle --notes $notes `
-    release/autoformat.7z wps-addon-build/autoformat.exe
-  if ($LASTEXITCODE -ne 0) { throw "GitHub Release 创建失败" }
+  if ($LASTEXITCODE -ne 0) { throw "Git tag push failed" }
+  gh release create $tag --title $tag --notes "详见 CHANGELOG.md" $releaseSevenZipPath $exePath
+  if ($LASTEXITCODE -ne 0) { throw "GitHub Release failed" }
 }
 
-# 7. 部署 Vercel
-Write-Host "==> 6/6: 部署到 Vercel" -ForegroundColor Yellow
-vercel --prod
-if ($LASTEXITCODE -ne 0) { throw "Vercel 部署失败" }
+Write-Host "[6/6] Deploy static files to Netlify..." -ForegroundColor Yellow
+npx netlify deploy --prod --dir $PublishDir
+if ($LASTEXITCODE -ne 0) { throw "Netlify deploy failed" }
 
-Write-Host "==> 部署完成！v$version 已发布到 Vercel 和 GitHub Release" -ForegroundColor Green
+Write-Host ">>> Done! v$version released and deployed to Netlify" -ForegroundColor Green

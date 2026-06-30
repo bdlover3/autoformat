@@ -1,4 +1,4 @@
-﻿/* eslint-env node */
+/* eslint-env node */
 const { buildWithArgs } = require('wpsjs/src/lib/build')
 
 buildWithArgs({ pluginType: 'offline' })

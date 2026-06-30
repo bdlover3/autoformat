@@ -430,6 +430,20 @@
             return element.name + "/" + element.addonType;
         }
 
+        function GetAddonDisplayName(element) {
+            return element.displayName || element.name;
+        }
+
+        function GetPluginTypeText(element) {
+            if (element.online == "false")
+                return "离线插件";
+            return "在线插件";
+        }
+
+        function GetStatusText(element) {
+            return element.version ? ("v" + element.version) : "-";
+        }
+
         function UpdateElement(element, cmd) {
             if (typeof element.name === 'undefined')
                 return
@@ -458,7 +472,8 @@
                 }
                 old.wpsaddoncmd = cmd;
                 document.getElementById(id + '_button').innerHTML = buttonLabel;
-                document.getElementById(id + '_domain').innerHTML = element.customDomain;
+                document.getElementById(id + '_pluginType').innerHTML = GetPluginTypeText(element);
+                document.getElementById(id + '_status').innerHTML = GetStatusText(element);
             } else {
                 var ele = document.createElement("div");
                 ele.className = "addonItem";
@@ -466,15 +481,14 @@
                 ele.wpsaddon = element;
                 ele.wpsaddoncmd = cmd;
                 ele.innerHTML =
-                    '<div class="addonItemName1">' + element.name + '</div>\n' +
+                    '<div class="addonItemName1">' + GetAddonDisplayName(element) + '</div>\n' +
                     '<div class="addonItemName2">' + des + '</div>\n' +
                     '<div class="addonItemName3">' + loadType + '</div>\n' +
                     '<div class="addonItemName4">' + element.url + '</div>\n' +
-                    '<div class="addonItemName1" id="' + id + '_domain' + '">' + element.customDomain + '</div>\n' +
+                    '<div class="addonItemName1" id="' + id + '_pluginType' + '">' + GetPluginTypeText(element) + '</div>\n' +
                     '<div class="addonItemName5"><div class="addonItemButton" id="' + id + '_button' + '" onclick="WpsAddonHandle(\'' + id + '\')">' + buttonLabel + '</div></div>\n' +
-                    '<div class="addonItemName6" id="' + id + '_status' + '">验证中...</div>\n';
+                    '<div class="addonItemName6" id="' + id + '_status' + '">' + GetStatusText(element) + '</div>\n';
                 addonList.appendChild(ele);
-                CheckPlugin(element);
             }
         }
 
@@ -570,7 +584,7 @@
 
         function LoadPublishAddons() {
             var addonList = document.getElementById("addonList");
-            var curList = [{"name":"autoformat","addonType":"wps","online":"false","multiUser":"false","url":"https://wpsautoformat.netlify.app/autoformat.7z","version":"2.0.0"}];
+            var curList = [{"name":"wps-autoformat","displayName":"WPS公文自动格式化","addonType":"wps","online":"false","multiUser":"false","url":"https://wpsautoformat.netlify.app/wps-autoformat.7z","version":"2.0.0"}];
             curList.forEach(function (element) {
                 var param = JSON.stringify(element).replace("\"", "\'");
                 UpdateElement(element, 'enable')
@@ -621,7 +635,7 @@
             <div class="addonItemName2">类型</div>
             <div class="addonItemName3">加载方式</div>
             <div class="addonItemName4">URL</div>
-            <div class="addonItemName1">自定义域名</div>
+            <div class="addonItemName1">插件类型</div>
             <div class="addonItemName5">管理</div>
             <div class="addonItemName6">状态</div>
         </div>
